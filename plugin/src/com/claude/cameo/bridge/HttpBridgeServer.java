@@ -1,8 +1,10 @@
 package com.claude.cameo.bridge;
 
 import com.claude.cameo.bridge.handlers.ContainmentTreeHandler;
+import com.claude.cameo.bridge.handlers.ElementMutationHandler;
 import com.claude.cameo.bridge.handlers.ElementQueryHandler;
 import com.claude.cameo.bridge.handlers.ProjectHandler;
+import com.claude.cameo.bridge.handlers.RelationshipHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpExchange;
 import com.google.gson.JsonObject;
@@ -28,7 +30,19 @@ public class HttpBridgeServer {
         server.createContext("/api/v1/status", this::handleStatus);
         server.createContext("/api/v1/project", new ProjectHandler());
         server.createContext("/api/v1/containment-tree", new ContainmentTreeHandler());
-        server.createContext("/api/v1/elements", new ElementQueryHandler());
+
+        // Route /elements by HTTP method: GET -> query, POST/PUT/DELETE -> mutation
+        ElementQueryHandler queryHandler = new ElementQueryHandler();
+        ElementMutationHandler mutationHandler = new ElementMutationHandler();
+        server.createContext("/api/v1/elements", exchange -> {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                queryHandler.handle(exchange);
+            } else {
+                mutationHandler.handle(exchange);
+            }
+        });
+
+        server.createContext("/api/v1/relationships", new RelationshipHandler());
     }
 
     public void start() {
