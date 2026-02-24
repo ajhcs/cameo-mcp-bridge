@@ -1,0 +1,8 @@
+build/
+.gradle/
+*.class
+*.jar
+!**/gradle-wrapper.jar
+__pycache__/
+*.egg-info/
+.venv/

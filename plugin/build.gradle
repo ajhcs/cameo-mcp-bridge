@@ -1,0 +1,55 @@
+plugins {
+    id 'java'
+}
+
+def cameoHome = project.hasProperty('cameoHome')
+    ? project.property('cameoHome')
+    : 'D:/DevTools/CatiaMagic'
+
+def jdk17Home = project.hasProperty('jdk17Home')
+    ? project.property('jdk17Home')
+    : 'D:/DevTools/jdk17/jdk-17.0.18+8'
+
+sourceCompatibility = '17'
+targetCompatibility = '17'
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src']
+        }
+    }
+}
+
+dependencies {
+    compileOnly fileTree(dir: "${cameoHome}/lib", include: ['md_api.jar'])
+    compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.nomagic.magicdraw.uml2-*.jar'])
+    compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.nomagic.magicdraw.foundation-*.jar'])
+    compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.nomagic.magicdraw.core.diagram-*.jar'])
+    compileOnly fileTree(dir: "${cameoHome}/lib", include: ['gson-*.jar'])
+}
+
+tasks.named('compileJava') {
+    options.compilerArgs += ['-Xlint:-deprecation', '-Xlint:-unchecked']
+    options.fork = true
+    options.forkOptions.executable = "${jdk17Home}/bin/javac.exe"
+}
+
+jar {
+    archiveBaseName = 'cameo-mcp-bridge'
+    archiveVersion = '1.0.0'
+    destinationDirectory = layout.buildDirectory.dir('libs')
+}
+
+tasks.register('assemblePlugin', Copy) {
+    dependsOn jar
+    from('plugin.xml')
+    from(jar.archiveFile)
+    into(layout.buildDirectory.dir('plugin-dist/com.claude.cameo.bridge'))
+}
+
+tasks.register('deploy', Copy) {
+    dependsOn assemblePlugin
+    from(layout.buildDirectory.dir('plugin-dist/com.claude.cameo.bridge'))
+    into("${cameoHome}/plugins/com.claude.cameo.bridge")
+}
