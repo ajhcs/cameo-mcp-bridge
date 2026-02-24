@@ -1,0 +1,12 @@
+[project]
+name = "cameo-mcp-server"
+version = "1.0.0"
+description = "MCP server bridging Claude Code to CATIA Magic / Cameo Systems Modeler"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.25.0",
+]
+
+[project.scripts]
+cameo-mcp = "cameo_mcp.server:main"
