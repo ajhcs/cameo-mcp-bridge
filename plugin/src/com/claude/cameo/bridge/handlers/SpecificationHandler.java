@@ -7,9 +7,13 @@ import com.claude.cameo.bridge.util.JsonHelper;
 import com.nomagic.magicdraw.openapi.uml.ModelElementsManager;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Constraint;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralString;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.OpaqueExpression;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.ValueSpecification;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.VisibilityKind;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.VisibilityKindEnum;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
@@ -134,6 +138,12 @@ public class SpecificationHandler implements HttpHandler {
                 response.add("appliedStereotypes", appliedStereotypes);
             }
 
+            // Read owned constraints (Use Case Description fields, etc.)
+            JsonObject constraints = readOwnedConstraints(element);
+            if (constraints.size() > 0) {
+                response.add("constraints", constraints);
+            }
+
             return response;
         });
 
@@ -144,17 +154,17 @@ public class SpecificationHandler implements HttpHandler {
             throws Exception {
 
         JsonObject body = JsonHelper.parseBody(exchange);
-        if (!body.has("properties") || !body.get("properties").isJsonObject()) {
+        boolean hasProps = body.has("properties") && body.get("properties").isJsonObject()
+                && body.getAsJsonObject("properties").size() > 0;
+        boolean hasConstraints = body.has("constraints") && body.get("constraints").isJsonObject()
+                && body.getAsJsonObject("constraints").size() > 0;
+        if (!hasProps && !hasConstraints) {
             HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST",
-                    "Request body must contain a \"properties\" object");
+                    "Request body must contain a \"properties\" and/or \"constraints\" object");
             return;
         }
-        JsonObject props = body.getAsJsonObject("properties");
-        if (props.size() == 0) {
-            HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST",
-                    "properties object is empty");
-            return;
-        }
+        JsonObject props = hasProps ? body.getAsJsonObject("properties") : new JsonObject();
+        JsonObject constraintProps = hasConstraints ? body.getAsJsonObject("constraints") : new JsonObject();
 
         JsonObject result = EdtDispatcher.write(
                 "Set specification on " + elementId, project -> {
@@ -216,10 +226,22 @@ public class SpecificationHandler implements HttpHandler {
                 unrecognized.add(propName);
             }
 
+            // Handle constraints (Use Case Description fields, etc.)
+            JsonArray setConstraintsArr = new JsonArray();
+            for (String cName : constraintProps.keySet()) {
+                String cValue = constraintProps.get(cName).getAsString();
+                setOrCreateConstraint(element, cName, cValue, project);
+                setConstraintsArr.add(cName);
+                setCount++;
+            }
+
             JsonObject response = new JsonObject();
             response.addProperty("updated", true);
             response.addProperty("setCount", setCount);
             response.add("setProperties", setPropertiesArr);
+            if (setConstraintsArr.size() > 0) {
+                response.add("setConstraints", setConstraintsArr);
+            }
             if (unrecognized.size() > 0) {
                 response.add("unrecognized", unrecognized);
             }
@@ -521,6 +543,101 @@ public class SpecificationHandler implements HttpHandler {
             LOG.log(Level.WARNING, "Failed to set documentation", e);
             return false;
         }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Private helpers -- Constraints (Use Case Description, etc.)
+    // -----------------------------------------------------------------------
+
+    private JsonObject readOwnedConstraints(Element element) {
+        JsonObject constraints = new JsonObject();
+        try {
+            Collection<Element> owned = element.getOwnedElement();
+            if (owned != null) {
+                for (Element child : owned) {
+                    if (child instanceof Constraint) {
+                        Constraint c = (Constraint) child;
+                        String name = (c instanceof NamedElement)
+                                ? ((NamedElement) c).getName() : null;
+                        if (name == null || name.isEmpty()) continue;
+                        String body = readConstraintBody(c);
+                        constraints.addProperty(name, body != null ? body : "");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read owned constraints", e);
+        }
+        return constraints;
+    }
+
+    private String readConstraintBody(Constraint c) {
+        try {
+            ValueSpecification spec = c.getSpecification();
+            if (spec == null) return null;
+            if (spec instanceof LiteralString) {
+                return ((LiteralString) spec).getValue();
+            }
+            if (spec instanceof OpaqueExpression) {
+                java.util.List<String> bodies = ((OpaqueExpression) spec).getBody();
+                if (bodies != null && !bodies.isEmpty()) {
+                    return bodies.get(0);
+                }
+            }
+            // Fallback: try stringValue via JMI
+            try {
+                Object sv = spec.refGetValue("value");
+                return sv != null ? String.valueOf(sv) : null;
+            } catch (Exception e) {
+                return null;
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read constraint specification", e);
+            return null;
+        }
+    }
+
+    private void setOrCreateConstraint(Element owner, String name, String text,
+            com.nomagic.magicdraw.core.Project project) throws Exception {
+        // Try to find existing constraint with this name
+        for (Element child : owner.getOwnedElement()) {
+            if (child instanceof Constraint) {
+                Constraint c = (Constraint) child;
+                String cName = (c instanceof NamedElement)
+                        ? ((NamedElement) c).getName() : null;
+                if (name.equalsIgnoreCase(cName)) {
+                    setConstraintText(c, text, project);
+                    return;
+                }
+            }
+        }
+        // Create new constraint
+        ElementsFactory ef = project.getElementsFactory();
+        Constraint c = ef.createConstraintInstance();
+        ((NamedElement) c).setName(name);
+        setConstraintText(c, text, project);
+        ModelElementsManager.getInstance().addElement(c, owner);
+    }
+
+    private void setConstraintText(Constraint c, String text,
+            com.nomagic.magicdraw.core.Project project) {
+        ValueSpecification existing = c.getSpecification();
+        // Update existing OpaqueExpression or LiteralString if present
+        if (existing instanceof OpaqueExpression) {
+            java.util.List<String> bodies = ((OpaqueExpression) existing).getBody();
+            bodies.clear();
+            bodies.add(text);
+            return;
+        }
+        if (existing instanceof LiteralString) {
+            ((LiteralString) existing).setValue(text);
+            return;
+        }
+        // Create a new OpaqueExpression
+        ElementsFactory ef = project.getElementsFactory();
+        OpaqueExpression oe = ef.createOpaqueExpressionInstance();
+        oe.getBody().add(text);
+        c.setSpecification(oe);
     }
 
     // -----------------------------------------------------------------------

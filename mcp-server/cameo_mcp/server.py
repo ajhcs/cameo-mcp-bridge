@@ -457,11 +457,12 @@ async def cameo_auto_layout(diagram_id: str) -> str:
 
 @mcp.tool()
 async def cameo_get_specification(element_id: str) -> str:
-    """Get the full specification of a model element — all UML properties and stereotype tagged values.
+    """Get the full specification of a model element — all UML properties, stereotype tagged values, and constraint fields.
 
     This is the programmatic equivalent of opening the Specification window
     in CATIA Magic. Returns every readable property on the element plus all
-    tagged values from applied stereotypes.
+    tagged values from applied stereotypes, plus any owned constraint fields
+    (e.g. Pre Condition, Post Condition, Goal, Assumption for Use Cases).
 
     Use this to inspect an element's full state before modifying it.
 
@@ -469,8 +470,10 @@ async def cameo_get_specification(element_id: str) -> str:
         element_id: The unique ID of the element.
 
     Returns:
-        JSON with "standardProperties" (UML/MOF properties like name,
-        visibility, isAbstract) and "taggedValues" (grouped by stereotype).
+        JSON with "properties" (UML/MOF properties like name, visibility,
+        isAbstract), "appliedStereotypes" (with tagged values grouped by
+        stereotype), and "constraints" (named constraint fields like
+        Pre Condition, Post Condition, Goal, Assumption).
     """
     result = await client.get_specification(element_id)
     return json.dumps(result, indent=2)
@@ -479,13 +482,14 @@ async def cameo_get_specification(element_id: str) -> str:
 @mcp.tool()
 async def cameo_set_specification(
     element_id: str,
-    properties: dict,
+    properties: Optional[dict] = None,
+    constraints: Optional[dict] = None,
 ) -> str:
-    """Set properties on a model element's specification.
+    """Set properties and/or constraint fields on a model element's specification.
 
     This is the programmatic equivalent of editing fields in the
-    Specification window in CATIA Magic. Supports both standard UML
-    properties and stereotype tagged values.
+    Specification window in CATIA Magic. Supports standard UML properties,
+    stereotype tagged values, and named constraint fields.
 
     The handler auto-resolves each property name: it first checks
     tagged values across all applied stereotypes, then falls back
@@ -497,16 +501,27 @@ async def cameo_set_specification(
     - documentation (element documentation text)
     - Any tagged value from an applied stereotype
 
+    Common constraint fields (for Use Cases):
+    - Pre Condition, Post Condition, Goal, Assumption
+
     Args:
         element_id: The unique ID of the element to modify.
         properties: Dictionary of property-name to value mappings.
-                    Example: {"name": "NewName", "visibility": "public",
-                              "isAbstract": "true", "Text": "The system shall..."}.
+                    Example: {"name": "NewName", "visibility": "public"}.
+        constraints: Dictionary of constraint-name to text mappings.
+                     These create or update named Constraint elements
+                     owned by the target element.
+                     Example: {"Pre Condition": "Customer has valid ATM card",
+                               "Post Condition": "Cash dispensed",
+                               "Goal": "Allow withdrawal",
+                               "Assumption": "ATM is operational"}.
 
     Returns:
-        JSON confirmation with count of properties set.
+        JSON confirmation with count of properties/constraints set.
     """
-    result = await client.set_specification(element_id, properties)
+    result = await client.set_specification(
+        element_id, properties=properties, constraints=constraints
+    )
     return json.dumps(result, indent=2)
 
 

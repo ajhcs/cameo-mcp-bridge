@@ -69,13 +69,22 @@ public class EdtDispatcher {
 
         SwingUtilities.invokeLater(() -> {
             SessionManager sm = SessionManager.getInstance();
+            boolean sessionCreated = false;
             try {
                 sm.createSession(project, sessionName);
+                sessionCreated = true;
                 JsonObject result = action.execute(project);
                 sm.closeSession(project);
                 future.complete(result);
             } catch (Exception e) {
-                sm.cancelSession(project);
+                if (sessionCreated) {
+                    try {
+                        sm.cancelSession(project);
+                    } catch (Exception cancelEx) {
+                        LOG.log(Level.WARNING,
+                                "Failed to cancel session: " + sessionName, cancelEx);
+                    }
+                }
                 LOG.log(Level.SEVERE, "Model write failed: " + sessionName, e);
                 future.completeExceptionally(e);
             }

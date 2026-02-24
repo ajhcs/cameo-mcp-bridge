@@ -280,10 +280,16 @@ async def get_specification(element_id: str) -> dict[str, Any]:
 
 async def set_specification(
     element_id: str,
-    properties: dict[str, Any],
+    properties: Optional[dict[str, Any]] = None,
+    constraints: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Set properties on an element's specification."""
-    return await _request("PUT", f"/elements/{element_id}/specification", json_body={"properties": properties})
+    """Set properties and/or constraints on an element's specification."""
+    body: dict[str, Any] = {}
+    if properties:
+        body["properties"] = properties
+    if constraints:
+        body["constraints"] = constraints
+    return await _request("PUT", f"/elements/{element_id}/specification", json_body=body)
 
 
 # -- Macros -------------------------------------------------------------------
