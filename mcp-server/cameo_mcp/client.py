@@ -110,6 +110,8 @@ async def create_element(
     parent_id: str,
     stereotype: Optional[str] = None,
     documentation: Optional[str] = None,
+    behavior_id: Optional[str] = None,
+    represents_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create a new model element."""
     body: dict[str, Any] = {
@@ -121,6 +123,10 @@ async def create_element(
         body["stereotype"] = stereotype
     if documentation is not None:
         body["documentation"] = documentation
+    if behavior_id is not None:
+        body["behaviorId"] = behavior_id
+    if represents_id is not None:
+        body["representsId"] = represents_id
     return await _request("POST", "/elements", json_body=body)
 
 
@@ -231,6 +237,7 @@ async def add_to_diagram(
     y: Optional[int] = None,
     width: Optional[int] = None,
     height: Optional[int] = None,
+    container_presentation_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Add a model element to a diagram canvas."""
     body: dict[str, Any] = {"elementId": element_id}
@@ -242,6 +249,8 @@ async def add_to_diagram(
         body["width"] = width
     if height is not None:
         body["height"] = height
+    if container_presentation_id is not None:
+        body["containerPresentationId"] = container_presentation_id
     return await _request("POST", f"/diagrams/{diagram_id}/elements", json_body=body)
 
 

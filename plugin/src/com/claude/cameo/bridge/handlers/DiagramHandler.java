@@ -326,6 +326,7 @@ public class DiagramHandler implements HttpHandler {
         String elementId = body.get("elementId").getAsString();
         int x = body.has("x") ? body.get("x").getAsInt() : 100;
         int y = body.has("y") ? body.get("y").getAsInt() : 100;
+        String containerPeId = optionalString(body, "containerPresentationId");
 
         JsonObject result = EdtDispatcher.write("MCP Bridge: Add Element to Diagram", project -> {
             DiagramPresentationElement dpe = findDiagramById(project, diagramId);
@@ -337,7 +338,16 @@ public class DiagramHandler implements HttpHandler {
             }
 
             PresentationElementsManager pem = PresentationElementsManager.getInstance();
-            ShapeElement shape = pem.createShapeElement(element, dpe, true, new Point(x, y));
+            PresentationElement shapeParent;
+            if (containerPeId != null) {
+                shapeParent = findPresentationElement(dpe.getPresentationElements(), containerPeId);
+                if (shapeParent == null) {
+                    throw new IllegalArgumentException("Container shape not found: " + containerPeId);
+                }
+            } else {
+                shapeParent = dpe;
+            }
+            ShapeElement shape = pem.createShapeElement(element, shapeParent, true, new Point(x, y));
 
             if (shape == null) {
                 throw new IllegalStateException(
@@ -734,6 +744,14 @@ public class DiagramHandler implements HttpHandler {
         }
 
         throw new IllegalArgumentException("Diagram not found: " + diagramId);
+    }
+
+    private String optionalString(JsonObject body, String key) {
+        if (!body.has(key) || body.get(key).isJsonNull()) {
+            return null;
+        }
+        String value = body.get(key).getAsString();
+        return value.isEmpty() ? null : value;
     }
 
     private String resolveDiagramType(String input) {

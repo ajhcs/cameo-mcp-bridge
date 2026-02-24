@@ -11,6 +11,9 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
 import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
+import com.nomagic.uml2.ext.magicdraw.actions.mdbasicactions.CallBehaviorAction;
+import com.nomagic.uml2.ext.magicdraw.commonbehaviors.mdbasicbehaviors.Behavior;
+import com.nomagic.uml2.ext.magicdraw.activities.mdintermediateactivities.ActivityPartition;
 import com.nomagic.uml2.impl.ElementsFactory;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -64,6 +67,8 @@ public class ElementMutationHandler implements HttpHandler {
         String parentId = requireString(body, "parentId");
         String stereotype = optionalString(body, "stereotype");
         String documentation = optionalString(body, "documentation");
+        String behaviorId = optionalString(body, "behaviorId");
+        String representsId = optionalString(body, "representsId");
 
         JsonObject result = EdtDispatcher.write("Create " + type + " " + name, project -> {
             Element parent = (Element) project.getElementByID(parentId);
@@ -76,6 +81,18 @@ public class ElementMutationHandler implements HttpHandler {
                 ((NamedElement) created).setName(name);
             }
             ModelElementsManager.getInstance().addElement(created, parent);
+            if (behaviorId != null && created instanceof CallBehaviorAction) {
+                Element behavior = (Element) project.getElementByID(behaviorId);
+                if (behavior instanceof Behavior) {
+                    ((CallBehaviorAction) created).setBehavior((Behavior) behavior);
+                }
+            }
+            if (representsId != null && created instanceof ActivityPartition) {
+                Element represents = (Element) project.getElementByID(representsId);
+                if (represents != null) {
+                    ((ActivityPartition) created).setRepresents(represents);
+                }
+            }
             if (stereotype != null && !stereotype.isEmpty()) {
                 Stereotype stereo = findStereotype(project, stereotype, null);
                 if (stereo != null) {
@@ -246,11 +263,46 @@ public class ElementMutationHandler implements HttpHandler {
             case "component":     return ef.createComponentInstance();
             case "constraint":    return ef.createConstraintInstance();
             case "comment":       return ef.createCommentInstance();
+            case "callbehavioraction":
+            case "call-behavior-action": return ef.createCallBehaviorActionInstance();
+            case "activitypartition":
+            case "activity-partition":
+            case "partition":         return ef.createActivityPartitionInstance();
+            case "initialnode":
+            case "initial-node":      return ef.createInitialNodeInstance();
+            case "activityfinalnode":
+            case "activity-final":
+            case "finalnode":
+            case "final-node":        return ef.createActivityFinalNodeInstance();
+            case "decisionnode":
+            case "decision-node":
+            case "decision":          return ef.createDecisionNodeInstance();
+            case "mergenode":
+            case "merge-node":
+            case "merge":             return ef.createMergeNodeInstance();
+            case "forknode":
+            case "fork-node":
+            case "fork":              return ef.createForkNodeInstance();
+            case "joinnode":
+            case "join-node":
+            case "join":              return ef.createJoinNodeInstance();
+            case "flowfinalnode":
+            case "flow-final":        return ef.createFlowFinalNodeInstance();
+            case "inputpin":
+            case "input-pin":         return ef.createInputPinInstance();
+            case "outputpin":
+            case "output-pin":        return ef.createOutputPinInstance();
+            case "opaqueaction":
+            case "opaque-action":     return ef.createOpaqueActionInstance();
+            case "action":            return ef.createCallBehaviorActionInstance();
             default:
                 throw new IllegalArgumentException("Unsupported element type: " + type
                         + ". Supported: package, block, class, use-case, activity, actor, "
                         + "requirement, interface-block, constraint-block, value-type, "
-                        + "signal, property, operation, port");
+                        + "signal, property, operation, port, enumeration, component, "
+                        + "constraint, comment, call-behavior-action, activity-partition, "
+                        + "initial-node, activity-final, decision, merge, fork, join, "
+                        + "flow-final, input-pin, output-pin, opaque-action, action");
         }
     }
 

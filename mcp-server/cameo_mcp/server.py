@@ -168,6 +168,8 @@ async def cameo_create_element(
     parent_id: str,
     stereotype: Optional[str] = None,
     documentation: Optional[str] = None,
+    behavior_id: Optional[str] = None,
+    represents_id: Optional[str] = None,
 ) -> str:
     """Create a new model element.
 
@@ -179,15 +181,23 @@ async def cameo_create_element(
                 FlowSpecification, Requirement
               - Behavioral: Activity, StateMachine, Interaction,
                 OpaqueBehavior, UseCase, Actor
-              - Actions/Nodes: Action, CallBehaviorAction, OpaqueAction,
-                InitialNode, FinalNode, DecisionNode, MergeNode,
-                ForkNode, JoinNode, FlowFinalNode
+              - Activity nodes: InitialNode, ActivityFinalNode,
+                FlowFinalNode, DecisionNode, MergeNode, ForkNode, JoinNode
+              - Actions: CallBehaviorAction, OpaqueAction
+              - Partitions: ActivityPartition
+              - Pins: InputPin, OutputPin
               - Other: Comment, Constraint, InstanceSpecification
         name: Display name for the element.
         parent_id: ID of the parent element (usually a Package or Block).
         stereotype: Optional stereotype to apply on creation (e.g. "block",
                     "requirement", "valueType", "flowPort").
         documentation: Optional description/documentation string.
+        behavior_id: For CallBehaviorAction type only -- links the action to
+                     the Activity it invokes. The referenced element must be
+                     an Activity or other Behavior.
+        represents_id: For ActivityPartition (swimlane) type only -- links the
+                       partition to the Block or Class it represents (the
+                       performer).
 
     Returns:
         JSON with the created element ID and details.
@@ -198,6 +208,8 @@ async def cameo_create_element(
         parent_id=parent_id,
         stereotype=stereotype,
         documentation=documentation,
+        behavior_id=behavior_id,
+        represents_id=represents_id,
     )
     return json.dumps(result, indent=2)
 
@@ -416,6 +428,7 @@ async def cameo_add_to_diagram(
     y: int = 100,
     width: int = -1,
     height: int = -1,
+    container_presentation_id: Optional[str] = None,
 ) -> str:
     """Add a model element to a diagram canvas.
 
@@ -429,6 +442,10 @@ async def cameo_add_to_diagram(
         y: Vertical position in pixels from the top. Defaults to 100.
         width: Shape width in pixels. Use -1 for auto-size. Defaults to -1.
         height: Shape height in pixels. Use -1 for auto-size. Defaults to -1.
+        container_presentation_id: Optional presentationId of a container
+            shape (e.g., a swimlane or system boundary) to place this element
+            inside. If omitted, the element is placed directly on the diagram
+            canvas. Get this ID from cameo_list_diagram_shapes.
 
     Returns:
         JSON confirmation with the created shape info.
@@ -440,6 +457,7 @@ async def cameo_add_to_diagram(
         y=y,
         width=width,
         height=height,
+        container_presentation_id=container_presentation_id,
     )
     return json.dumps(result, indent=2)
 
