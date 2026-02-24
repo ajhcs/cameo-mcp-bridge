@@ -270,6 +270,22 @@ async def get_containment_tree(
     return await _request("GET", "/containment-tree", params=params)
 
 
+# -- Specification -----------------------------------------------------------
+
+
+async def get_specification(element_id: str) -> dict[str, Any]:
+    """Get the full specification (all properties + tagged values) of an element."""
+    return await _request("GET", f"/elements/{element_id}/specification")
+
+
+async def set_specification(
+    element_id: str,
+    properties: dict[str, Any],
+) -> dict[str, Any]:
+    """Set properties on an element's specification."""
+    return await _request("PUT", f"/elements/{element_id}/specification", json_body={"properties": properties})
+
+
 # -- Macros -------------------------------------------------------------------
 
 
