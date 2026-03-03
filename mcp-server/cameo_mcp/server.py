@@ -462,18 +462,18 @@ async def cameo_add_to_diagram(
     return json.dumps(result, indent=2)
 
 @mcp.tool()
-async def cameo_get_diagram_image(
-    diagram_id: str,
-    format: str = "png",
-) -> str:
-    """Export a diagram as a base64-encoded image.
+async def cameo_get_diagram_image(diagram_id: str) -> str:
+    """Export a diagram as a base64-encoded PNG image.
+
+    Returns a base64-encoded PNG. For large diagrams that exceed token limits,
+    use cameo_execute_macro with ImageExporter.export(dpe, ImageExporter.PNG, file)
+    to save directly to disk instead.
 
     Args:
         diagram_id: The unique ID of the diagram to export.
-        format: Image format, typically "png". Defaults to "png".
 
     Returns:
-        JSON with base64-encoded image data and metadata.
+        JSON with base64-encoded image data and metadata (width, height).
     """
     result = await client.get_diagram_image(diagram_id)
     return json.dumps(result, indent=2)

@@ -44,7 +44,6 @@ public class ContainmentTreeHandler implements HttpHandler {
             if ("GET".equals(method)) {
                 handleGetTree(exchange);
             } else if ("OPTIONS".equals(method)) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
                 exchange.sendResponseHeaders(204, -1);

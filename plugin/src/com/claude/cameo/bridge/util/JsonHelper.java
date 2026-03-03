@@ -96,4 +96,38 @@ public class JsonHelper {
         }
         return null;
     }
+
+    /**
+     * Extract a required non-empty string field from a JSON body.
+     *
+     * @param body the JSON object
+     * @param key  the field name
+     * @return the string value
+     * @throws IllegalArgumentException if the field is missing or empty
+     */
+    public static String requireString(JsonObject body, String key) {
+        if (!body.has(key) || body.get(key).isJsonNull()) {
+            throw new IllegalArgumentException("Required field missing: " + key);
+        }
+        String value = body.get(key).getAsString();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException("Required field is empty: " + key);
+        }
+        return value;
+    }
+
+    /**
+     * Extract an optional string field from a JSON body.
+     *
+     * @param body the JSON object
+     * @param key  the field name
+     * @return the string value, or null if missing, null, or empty
+     */
+    public static String optionalString(JsonObject body, String key) {
+        if (!body.has(key) || body.get(key).isJsonNull()) {
+            return null;
+        }
+        String value = body.get(key).getAsString();
+        return value.isEmpty() ? null : value;
+    }
 }

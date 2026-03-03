@@ -50,7 +50,6 @@ public class RelationshipHandler implements HttpHandler {
         try {
             String method = exchange.getRequestMethod();
             if ("OPTIONS".equals(method)) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, OPTIONS");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
                 exchange.sendResponseHeaders(204, -1);
@@ -71,11 +70,11 @@ public class RelationshipHandler implements HttpHandler {
 
     private void handleCreateRelationship(HttpExchange exchange) throws Exception {
         JsonObject body = JsonHelper.parseBody(exchange);
-        String type = requireString(body, "type");
-        String sourceId = requireString(body, "sourceId");
-        String targetId = requireString(body, "targetId");
-        String name = optionalString(body, "name");
-        String guard = optionalString(body, "guard");
+        String type = JsonHelper.requireString(body, "type");
+        String sourceId = JsonHelper.requireString(body, "sourceId");
+        String targetId = JsonHelper.requireString(body, "targetId");
+        String name = JsonHelper.optionalString(body, "name");
+        String guard = JsonHelper.optionalString(body, "guard");
 
         JsonObject result = EdtDispatcher.write("Create " + type + " relationship", project -> {
             Element source = (Element) project.getElementByID(sourceId);
@@ -308,22 +307,4 @@ public class RelationshipHandler implements HttpHandler {
         return abstraction;
     }
 
-    private String requireString(JsonObject body, String key) {
-        if (!body.has(key) || body.get(key).isJsonNull()) {
-            throw new IllegalArgumentException("Required field missing: " + key);
-        }
-        String value = body.get(key).getAsString();
-        if (value.isEmpty()) {
-            throw new IllegalArgumentException("Required field is empty: " + key);
-        }
-        return value;
-    }
-
-    private String optionalString(JsonObject body, String key) {
-        if (!body.has(key) || body.get(key).isJsonNull()) {
-            return null;
-        }
-        String value = body.get(key).getAsString();
-        return value.isEmpty() ? null : value;
-    }
 }

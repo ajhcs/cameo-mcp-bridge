@@ -13,8 +13,15 @@ def _base_url() -> str:
     return f"http://127.0.0.1:{port}/api/v1"
 
 
-def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url=_base_url(), timeout=30.0)
+# Module-level singleton client for connection pooling and keepalive
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(base_url=_base_url(), timeout=30.0)
+    return _shared_client
 
 
 async def _request(
@@ -29,17 +36,17 @@ async def _request(
     Raises a clear error when the plugin is unreachable.
     """
     try:
-        async with _client() as client:
-            response = await client.request(
-                method,
-                path,
-                params=params,
-                json=json_body,
-            )
-            response.raise_for_status()
-            if response.status_code == 204 or not response.content:
-                return {"status": "ok"}
-            return response.json()
+        client = _get_client()
+        response = await client.request(
+            method,
+            path,
+            params=params,
+            json=json_body,
+        )
+        response.raise_for_status()
+        if response.status_code == 204 or not response.content:
+            return {"status": "ok"}
+        return response.json()
     except httpx.ConnectError:
         raise ConnectionError(
             "Cannot connect to CameoMCPBridge plugin at "
@@ -334,9 +341,9 @@ async def set_specification(
 ) -> dict[str, Any]:
     """Set properties and/or constraints on an element's specification."""
     body: dict[str, Any] = {}
-    if properties:
+    if properties is not None:
         body["properties"] = properties
-    if constraints:
+    if constraints is not None:
         body["constraints"] = constraints
     return await _request("PUT", f"/elements/{element_id}/specification", json_body=body)
 

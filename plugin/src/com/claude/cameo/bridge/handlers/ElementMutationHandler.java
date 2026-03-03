@@ -34,7 +34,6 @@ public class ElementMutationHandler implements HttpHandler {
         try {
             String method = exchange.getRequestMethod();
             if ("OPTIONS".equals(method)) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
                 exchange.sendResponseHeaders(204, -1);
@@ -62,13 +61,13 @@ public class ElementMutationHandler implements HttpHandler {
 
     private void handleCreateElement(HttpExchange exchange) throws Exception {
         JsonObject body = JsonHelper.parseBody(exchange);
-        String type = requireString(body, "type");
-        String name = requireString(body, "name");
-        String parentId = requireString(body, "parentId");
-        String stereotype = optionalString(body, "stereotype");
-        String documentation = optionalString(body, "documentation");
-        String behaviorId = optionalString(body, "behaviorId");
-        String representsId = optionalString(body, "representsId");
+        String type = JsonHelper.requireString(body, "type");
+        String name = JsonHelper.requireString(body, "name");
+        String parentId = JsonHelper.requireString(body, "parentId");
+        String stereotype = JsonHelper.optionalString(body, "stereotype");
+        String documentation = JsonHelper.optionalString(body, "documentation");
+        String behaviorId = JsonHelper.optionalString(body, "behaviorId");
+        String representsId = JsonHelper.optionalString(body, "representsId");
 
         JsonObject result = EdtDispatcher.write("Create " + type + " " + name, project -> {
             Element parent = (Element) project.getElementByID(parentId);
@@ -116,8 +115,8 @@ public class ElementMutationHandler implements HttpHandler {
 
     private void handleModifyElement(HttpExchange exchange, String elementId) throws Exception {
         JsonObject body = JsonHelper.parseBody(exchange);
-        String newName = optionalString(body, "name");
-        String newDoc = optionalString(body, "documentation");
+        String newName = JsonHelper.optionalString(body, "name");
+        String newDoc = JsonHelper.optionalString(body, "documentation");
         if (newName == null && newDoc == null) {
             HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST",
                     "At least one of name or documentation is required");
@@ -172,8 +171,8 @@ public class ElementMutationHandler implements HttpHandler {
 
     private void handleApplyStereotype(HttpExchange exchange, String elementId) throws Exception {
         JsonObject body = JsonHelper.parseBody(exchange);
-        String stereotypeName = requireString(body, "stereotype");
-        String profileName = optionalString(body, "profile");
+        String stereotypeName = JsonHelper.requireString(body, "stereotype");
+        String profileName = JsonHelper.optionalString(body, "profile");
 
         JsonObject result = EdtDispatcher.write(
                 "Apply stereotype " + stereotypeName + " to " + elementId, project -> {
@@ -199,7 +198,7 @@ public class ElementMutationHandler implements HttpHandler {
 
     private void handleSetTaggedValues(HttpExchange exchange, String elementId) throws Exception {
         JsonObject body = JsonHelper.parseBody(exchange);
-        String stereotypeName = requireString(body, "stereotype");
+        String stereotypeName = JsonHelper.requireString(body, "stereotype");
         if (!body.has("values") || !body.get("values").isJsonObject()) {
             HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST", "values object is required");
             return;
@@ -326,22 +325,4 @@ public class ElementMutationHandler implements HttpHandler {
         return null;
     }
 
-    private String requireString(JsonObject body, String key) {
-        if (!body.has(key) || body.get(key).isJsonNull()) {
-            throw new IllegalArgumentException("Required field missing: " + key);
-        }
-        String value = body.get(key).getAsString();
-        if (value.isEmpty()) {
-            throw new IllegalArgumentException("Required field is empty: " + key);
-        }
-        return value;
-    }
-
-    private String optionalString(JsonObject body, String key) {
-        if (!body.has(key) || body.get(key).isJsonNull()) {
-            return null;
-        }
-        String value = body.get(key).getAsString();
-        return value.isEmpty() ? null : value;
-    }
 }

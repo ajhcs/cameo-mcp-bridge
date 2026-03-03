@@ -1,8 +1,19 @@
+# Java
 build/
 .gradle/
 *.class
 *.jar
 !**/gradle-wrapper.jar
+.idea/
+*.iml
+
+# Python
 __pycache__/
 *.egg-info/
 .venv/
+*.pyc
+dist/
+
+# OS
+.DS_Store
+Thumbs.db

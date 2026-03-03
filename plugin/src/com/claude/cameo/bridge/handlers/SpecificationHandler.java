@@ -71,7 +71,6 @@ public class SpecificationHandler implements HttpHandler {
             String method = exchange.getRequestMethod();
 
             if ("OPTIONS".equals(method)) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Methods",
                         "GET, PUT, OPTIONS");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Headers",

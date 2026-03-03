@@ -14,10 +14,12 @@ import com.nomagic.magicdraw.openapi.uml.SessionManager;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpExchange;
 import com.google.gson.JsonObject;
+import javax.swing.SwingUtilities;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -88,6 +90,9 @@ public class HttpBridgeServer {
      * sessions will fail with "Session is already created". This endpoint
      * cancels (or closes) the dangling session so work can continue without
      * restarting Cameo.
+     *
+     * Runs on the Swing EDT because SessionManager operations must execute on
+     * the same thread that created the session.
      */
     private void handleSessionReset(HttpExchange exchange) throws IOException {
         if (!"POST".equals(exchange.getRequestMethod())) {
@@ -101,42 +106,50 @@ public class HttpBridgeServer {
             return;
         }
 
-        SessionManager sm = SessionManager.getInstance();
-        JsonObject response = new JsonObject();
-
-        // Check whether a session is currently active
-        if (!sm.isSessionCreated(project)) {
-            response.addProperty("reset", false);
-            response.addProperty("message", "No active session");
-            sendJson(exchange, 200, response);
-            return;
-        }
-
-        // Try cancel first (rolls back partial changes), fall back to close
         try {
-            sm.cancelSession(project);
-            response.addProperty("reset", true);
-        } catch (Exception cancelEx) {
-            LOG.log(Level.WARNING, "cancelSession failed, trying closeSession", cancelEx);
-            try {
-                sm.closeSession(project);
-                response.addProperty("reset", true);
-            } catch (Exception closeEx) {
-                LOG.log(Level.SEVERE, "closeSession also failed", closeEx);
-                sendError(exchange, 500, "SESSION_RESET_FAILED",
-                        "cancelSession failed: " + cancelEx.getMessage()
-                                + "; closeSession failed: " + closeEx.getMessage());
-                return;
-            }
-        }
+            CompletableFuture<JsonObject> future = new CompletableFuture<>();
 
-        sendJson(exchange, 200, response);
+            SwingUtilities.invokeLater(() -> {
+                SessionManager sm = SessionManager.getInstance();
+                JsonObject response = new JsonObject();
+
+                if (!sm.isSessionCreated(project)) {
+                    response.addProperty("reset", false);
+                    response.addProperty("message", "No active session");
+                    future.complete(response);
+                    return;
+                }
+
+                // Try cancel first (rolls back partial changes), fall back to close
+                try {
+                    sm.cancelSession(project);
+                    response.addProperty("reset", true);
+                    future.complete(response);
+                } catch (Exception cancelEx) {
+                    LOG.log(Level.WARNING, "cancelSession failed, trying closeSession", cancelEx);
+                    try {
+                        sm.closeSession(project);
+                        response.addProperty("reset", true);
+                        future.complete(response);
+                    } catch (Exception closeEx) {
+                        LOG.log(Level.SEVERE, "closeSession also failed", closeEx);
+                        future.completeExceptionally(new RuntimeException(
+                                "cancelSession failed: " + cancelEx.getMessage()
+                                        + "; closeSession failed: " + closeEx.getMessage()));
+                    }
+                }
+            });
+
+            JsonObject result = future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            sendJson(exchange, 200, result);
+        } catch (Exception e) {
+            sendError(exchange, 500, "SESSION_RESET_FAILED", e.getMessage());
+        }
     }
 
     public static void sendJson(HttpExchange exchange, int status, JsonObject json) throws IOException {
         byte[] bytes = json.toString().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);

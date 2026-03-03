@@ -4,6 +4,7 @@ import com.claude.cameo.bridge.HttpBridgeServer;
 import com.claude.cameo.bridge.util.JsonHelper;
 import com.nomagic.magicdraw.core.Application;
 import com.nomagic.magicdraw.core.Project;
+import com.nomagic.magicdraw.openapi.uml.SessionManager;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.google.gson.JsonObject;
@@ -44,7 +45,6 @@ public class MacroHandler implements HttpHandler {
             String path = exchange.getRequestURI().getPath();
 
             if ("OPTIONS".equals(method)) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Methods",
                         "GET, POST, OPTIONS");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
@@ -177,6 +177,22 @@ public class MacroHandler implements HttpHandler {
         CompletableFuture<JsonObject> future = new CompletableFuture<>();
 
         SwingUtilities.invokeLater(() -> {
+            // Clean up any stale session left by a previous failed macro
+            SessionManager sm = SessionManager.getInstance();
+            if (sm.isSessionCreated(project)) {
+                LOG.warning("Stale session detected before macro execution — cancelling");
+                try {
+                    sm.cancelSession(project);
+                } catch (Exception e) {
+                    LOG.log(Level.WARNING, "Failed to cancel stale session, trying close", e);
+                    try {
+                        sm.closeSession(project);
+                    } catch (Exception e2) {
+                        LOG.log(Level.SEVERE, "Failed to close stale session", e2);
+                    }
+                }
+            }
+
             // Set up output capture
             StringWriter outputWriter = new StringWriter();
             StringWriter errorWriter = new StringWriter();

@@ -51,7 +51,6 @@ public class DiagramHandler implements HttpHandler {
             String path = exchange.getRequestURI().getPath();
 
             if ("OPTIONS".equals(method)) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Methods",
                         "GET, POST, PUT, DELETE, OPTIONS");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
@@ -187,39 +186,7 @@ public class DiagramHandler implements HttpHandler {
 
             List<PresentationElement> presentationElements = dpe.getPresentationElements();
             JsonArray shapesArray = new JsonArray();
-            if (presentationElements != null) {
-                for (PresentationElement pe : presentationElements) {
-                    try {
-                        Element modelElement = pe.getElement();
-                        if (modelElement == null) continue;
-
-                        JsonObject shapeJson = new JsonObject();
-                        shapeJson.addProperty("elementId", modelElement.getID());
-                        if (modelElement instanceof NamedElement) {
-                            shapeJson.addProperty("name",
-                                    ((NamedElement) modelElement).getName());
-                        }
-
-                        try {
-                            Rectangle bounds = pe.getBounds();
-                            if (bounds != null) {
-                                JsonObject boundsJson = new JsonObject();
-                                boundsJson.addProperty("x", bounds.x);
-                                boundsJson.addProperty("y", bounds.y);
-                                boundsJson.addProperty("width", bounds.width);
-                                boundsJson.addProperty("height", bounds.height);
-                                shapeJson.add("bounds", boundsJson);
-                            }
-                        } catch (Exception e) {
-                            // Some presentation elements do not have rectangular bounds
-                        }
-
-                        shapesArray.add(shapeJson);
-                    } catch (Exception e) {
-                        LOG.log(Level.FINE, "Error reading presentation element", e);
-                    }
-                }
-            }
+            collectShapes(presentationElements, shapesArray, null);
             response.add("shapes", shapesArray);
 
             return response;
@@ -326,7 +293,7 @@ public class DiagramHandler implements HttpHandler {
         String elementId = body.get("elementId").getAsString();
         int x = body.has("x") ? body.get("x").getAsInt() : 100;
         int y = body.has("y") ? body.get("y").getAsInt() : 100;
-        String containerPeId = optionalString(body, "containerPresentationId");
+        String containerPeId = JsonHelper.optionalString(body, "containerPresentationId");
 
         JsonObject result = EdtDispatcher.write("MCP Bridge: Add Element to Diagram", project -> {
             DiagramPresentationElement dpe = findDiagramById(project, diagramId);
@@ -407,44 +374,7 @@ public class DiagramHandler implements HttpHandler {
 
             JsonArray shapesArray = new JsonArray();
             List<PresentationElement> presentationElements = dpe.getPresentationElements();
-            if (presentationElements != null) {
-                for (PresentationElement pe : presentationElements) {
-                    try {
-                        JsonObject shapeJson = new JsonObject();
-                        shapeJson.addProperty("presentationId", pe.getID());
-                        shapeJson.addProperty("shapeType", pe.getClass().getSimpleName());
-
-                        Element modelElement = pe.getElement();
-                        if (modelElement != null) {
-                            shapeJson.addProperty("elementId", modelElement.getID());
-                            if (modelElement instanceof NamedElement) {
-                                shapeJson.addProperty("elementName",
-                                        ((NamedElement) modelElement).getName());
-                            }
-                            shapeJson.addProperty("elementType",
-                                    modelElement.getHumanType());
-                        }
-
-                        try {
-                            Rectangle bounds = pe.getBounds();
-                            if (bounds != null) {
-                                JsonObject boundsJson = new JsonObject();
-                                boundsJson.addProperty("x", bounds.x);
-                                boundsJson.addProperty("y", bounds.y);
-                                boundsJson.addProperty("width", bounds.width);
-                                boundsJson.addProperty("height", bounds.height);
-                                shapeJson.add("bounds", boundsJson);
-                            }
-                        } catch (Exception e) {
-                            // Some presentation elements do not have rectangular bounds
-                        }
-
-                        shapesArray.add(shapeJson);
-                    } catch (Exception e) {
-                        LOG.log(Level.FINE, "Error reading presentation element", e);
-                    }
-                }
-            }
+            collectShapes(presentationElements, shapesArray, null);
 
             JsonObject response = new JsonObject();
             response.addProperty("diagramId", diagramId);
@@ -454,6 +384,67 @@ public class DiagramHandler implements HttpHandler {
         });
 
         HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
+    /**
+     * Recursively collect presentation elements into a flat array,
+     * tagging each with its parentPresentationId for hierarchy context.
+     */
+    private void collectShapes(List<PresentationElement> elements, JsonArray shapesArray,
+            String parentPeId) {
+        if (elements == null) return;
+        for (PresentationElement pe : elements) {
+            try {
+                JsonObject shapeJson = new JsonObject();
+                shapeJson.addProperty("presentationId", pe.getID());
+                shapeJson.addProperty("shapeType", pe.getClass().getSimpleName());
+
+                if (parentPeId != null) {
+                    shapeJson.addProperty("parentPresentationId", parentPeId);
+                }
+
+                Element modelElement = pe.getElement();
+                if (modelElement != null) {
+                    shapeJson.addProperty("elementId", modelElement.getID());
+                    if (modelElement instanceof NamedElement) {
+                        shapeJson.addProperty("elementName",
+                                ((NamedElement) modelElement).getName());
+                    }
+                    shapeJson.addProperty("elementType",
+                            modelElement.getHumanType());
+                }
+
+                try {
+                    Rectangle bounds = pe.getBounds();
+                    if (bounds != null) {
+                        JsonObject boundsJson = new JsonObject();
+                        boundsJson.addProperty("x", bounds.x);
+                        boundsJson.addProperty("y", bounds.y);
+                        boundsJson.addProperty("width", bounds.width);
+                        boundsJson.addProperty("height", bounds.height);
+                        shapeJson.add("bounds", boundsJson);
+                    }
+                } catch (Exception e) {
+                    // Some presentation elements do not have rectangular bounds
+                }
+
+                // Count children for context
+                List<PresentationElement> children = pe.getPresentationElements();
+                int childCount = (children != null) ? children.size() : 0;
+                if (childCount > 0) {
+                    shapeJson.addProperty("childCount", childCount);
+                }
+
+                shapesArray.add(shapeJson);
+
+                // Recurse into children
+                if (childCount > 0) {
+                    collectShapes(children, shapesArray, pe.getID());
+                }
+            } catch (Exception e) {
+                LOG.log(Level.FINE, "Error reading presentation element", e);
+            }
+        }
     }
 
     private void handleMoveResizeShapes(HttpExchange exchange, String diagramId) throws Exception {
@@ -676,8 +667,11 @@ public class DiagramHandler implements HttpHandler {
                             } else {
                                 p.setValue(val.getAsString());
                             }
+                        } else if (val.isJsonNull()) {
+                            p.setValue("");
                         } else {
-                            p.setValue(val.getAsString());
+                            // JSON objects/arrays: convert to string representation
+                            p.setValue(val.toString());
                         }
                         JsonObject u = new JsonObject();
                         u.addProperty("name", propName);
@@ -709,7 +703,7 @@ public class DiagramHandler implements HttpHandler {
     }
 
     /**
-     * Find a PresentationElement by its ID within a list.
+     * Find a PresentationElement by its ID, searching recursively into children.
      */
     private PresentationElement findPresentationElement(
             List<PresentationElement> elements, String peId) {
@@ -717,6 +711,12 @@ public class DiagramHandler implements HttpHandler {
         for (PresentationElement pe : elements) {
             if (peId.equals(pe.getID())) {
                 return pe;
+            }
+            // Recurse into children (regions, nested states, messages, etc.)
+            List<PresentationElement> children = pe.getPresentationElements();
+            if (children != null && !children.isEmpty()) {
+                PresentationElement found = findPresentationElement(children, peId);
+                if (found != null) return found;
             }
         }
         return null;
@@ -744,14 +744,6 @@ public class DiagramHandler implements HttpHandler {
         }
 
         throw new IllegalArgumentException("Diagram not found: " + diagramId);
-    }
-
-    private String optionalString(JsonObject body, String key) {
-        if (!body.has(key) || body.get(key).isJsonNull()) {
-            return null;
-        }
-        String value = body.get(key).getAsString();
-        return value.isEmpty() ? null : value;
     }
 
     private String resolveDiagramType(String input) {

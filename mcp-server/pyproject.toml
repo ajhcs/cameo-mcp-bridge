@@ -1,12 +1,22 @@
 [project]
 name = "cameo-mcp-server"
 version = "1.0.0"
-description = "MCP server bridging Claude Code to CATIA Magic / Cameo Systems Modeler"
+description = "MCP server bridging AI assistants to CATIA Magic / Cameo Systems Modeler"
 requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Cole Lyons" },
+]
+keywords = ["mcp", "cameo", "catia-magic", "sysml", "uml", "mbse"]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.25.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ajhcs/cameo-mcp-bridge"
+Repository = "https://github.com/ajhcs/cameo-mcp-bridge"
+Issues = "https://github.com/ajhcs/cameo-mcp-bridge/issues"
 
 [project.scripts]
 cameo-mcp = "cameo_mcp.server:main"
