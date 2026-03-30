@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+import os
+from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -18,33 +19,41 @@ mcp = FastMCP(
 )
 
 
+def _mcp_result(result: dict[str, Any]) -> Any:
+    """Preserve legacy JSON-string responses unless explicitly disabled."""
+    structured = os.environ.get("CAMEO_MCP_STRUCTURED_RESPONSES", "").lower()
+    if structured in {"1", "true", "yes", "on"}:
+        return result
+    return json.dumps(result, separators=(",", ":"), ensure_ascii=False)
+
+
 # -- Status / Project --------------------------------------------------------
 
 
 @mcp.tool()
-async def cameo_status() -> str:
+async def cameo_status() -> dict[str, Any]:
     """Check if CATIA Magic is running and the CameoMCPBridge plugin is responsive.
 
     Returns:
         JSON with plugin status, CATIA Magic version, and connection info.
     """
     result = await client.status()
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
-async def cameo_get_project() -> str:
+async def cameo_get_project() -> dict[str, Any]:
     """Get current project info: name, file path, and primary model ID.
 
     Returns:
         JSON with project name, file location, and root model element ID.
     """
     result = await client.get_project()
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
-async def cameo_save_project() -> str:
+async def cameo_save_project() -> dict[str, Any]:
     """Save the current project to disk.
 
     Call this after making changes you want to persist.
@@ -53,14 +62,14 @@ async def cameo_save_project() -> str:
         JSON confirmation of save operation.
     """
     result = await client.save_project()
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 # -- Session Management -------------------------------------------------------
 
 
 @mcp.tool()
-async def cameo_reset_session() -> str:
+async def cameo_reset_session() -> dict[str, Any]:
     """Force-close any stuck model editing session in CATIA Magic.
 
     Use this tool when you encounter errors like:
@@ -79,7 +88,7 @@ async def cameo_reset_session() -> str:
         JSON confirmation that the session was reset.
     """
     result = await client.reset_session()
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 # -- Elements -----------------------------------------------------------------
 
@@ -91,7 +100,7 @@ async def cameo_query_elements(
     package_name: Optional[str] = None,
     stereotype: Optional[str] = None,
     recursive: bool = True,
-) -> str:
+) -> dict[str, Any]:
     """Search for model elements matching filters.
 
     Use this to find existing elements before creating new ones or
@@ -120,11 +129,11 @@ async def cameo_query_elements(
         stereotype=stereotype,
         recursive=recursive,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
-async def cameo_get_element(element_id: str) -> str:
+async def cameo_get_element(element_id: str) -> dict[str, Any]:
     """Get full details of a model element.
 
     Returns all properties including name, type, documentation,
@@ -137,14 +146,14 @@ async def cameo_get_element(element_id: str) -> str:
         JSON with complete element details.
     """
     result = await client.get_element(element_id)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
 async def cameo_get_containment_tree(
     root_id: Optional[str] = None,
     depth: int = 3,
-) -> str:
+) -> dict[str, Any]:
     """Browse the containment tree structure.
 
     Use this to understand the project hierarchy before creating or
@@ -155,11 +164,44 @@ async def cameo_get_containment_tree(
                  project model root.
         depth: How many levels deep to traverse. Defaults to 3.
 
+    For large models, prefer `cameo_list_containment_children`; this recursive
+    endpoint can still produce very large payloads.
+
     Returns:
         JSON tree structure with element IDs, names, types, and children.
     """
     result = await client.get_containment_tree(root_id=root_id, depth=depth)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_containment_children(
+    root_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List a compact, paginated slice of the containment tree.
+
+    Use this for large models when a full recursive tree would be too large
+    to inspect or pass around. It returns only the immediate children of the
+    selected root, along with child counts and paging metadata.
+
+    Args:
+        root_id: Element ID to use as root. Omit to start from the project
+                 primary model.
+        limit: Maximum number of immediate children to return. Defaults to 50.
+        offset: Zero-based offset into the child list. Defaults to 0.
+
+    Returns:
+        JSON-compatible object with the selected root, compact children, and
+        paging metadata.
+    """
+    result = await client.list_containment_children(
+        root_id=root_id,
+        limit=limit,
+        offset=offset,
+    )
+    return _mcp_result(result)
 
 @mcp.tool()
 async def cameo_create_element(
@@ -170,13 +212,15 @@ async def cameo_create_element(
     documentation: Optional[str] = None,
     behavior_id: Optional[str] = None,
     represents_id: Optional[str] = None,
-) -> str:
+    metaclasses: Optional[list[str]] = None,
+) -> dict[str, Any]:
     """Create a new model element.
 
     Args:
         type: The UML/SysML metaclass. Valid values include:
-              - Structural: Class, Package, Property, Port, Interface,
+              - Structural: Class, Package, Profile, Property, Port, Interface,
                 DataType, Enumeration, Signal, Component, Node
+              - Profiles: Stereotype (owned by a Profile; use metaclasses to bind)
               - SysML: Block, ConstraintBlock, InterfaceBlock, ValueType,
                 FlowSpecification, Requirement
               - Behavioral: Activity, StateMachine, Interaction,
@@ -198,6 +242,8 @@ async def cameo_create_element(
         represents_id: For ActivityPartition (swimlane) type only -- links the
                        partition to the Block or Class it represents (the
                        performer).
+        metaclasses: For Stereotype type only -- list of UML metaclass names
+                     to bind, such as ["Class"] or ["Property"].
 
     Returns:
         JSON with the created element ID and details.
@@ -210,8 +256,9 @@ async def cameo_create_element(
         documentation=documentation,
         behavior_id=behavior_id,
         represents_id=represents_id,
+        metaclasses=metaclasses,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
@@ -219,7 +266,7 @@ async def cameo_modify_element(
     element_id: str,
     name: Optional[str] = None,
     documentation: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Modify an existing element name or documentation.
 
     Args:
@@ -235,11 +282,11 @@ async def cameo_modify_element(
         name=name,
         documentation=documentation,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
-async def cameo_delete_element(element_id: str) -> str:
+async def cameo_delete_element(element_id: str) -> dict[str, Any]:
     """Delete a model element.
 
     Warning: This permanently removes the element and all its owned
@@ -252,7 +299,7 @@ async def cameo_delete_element(element_id: str) -> str:
         JSON confirmation of deletion.
     """
     result = await client.delete_element(element_id)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 # -- Stereotypes / Tagged Values ----------------------------------------------
 
@@ -262,7 +309,7 @@ async def cameo_apply_stereotype(
     element_id: str,
     stereotype: str,
     profile: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Apply a stereotype to an element.
 
     Args:
@@ -280,7 +327,7 @@ async def cameo_apply_stereotype(
         stereotype=stereotype,
         profile=profile,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
@@ -288,7 +335,7 @@ async def cameo_set_tagged_values(
     element_id: str,
     stereotype: str,
     values: dict,
-) -> str:
+) -> dict[str, Any]:
     """Set tagged values on a stereotyped element.
 
     Tagged values are stereotype-specific properties. The element must
@@ -309,7 +356,62 @@ async def cameo_set_tagged_values(
         stereotype=stereotype,
         values=values,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_set_stereotype_metaclasses(
+    stereotype_id: str,
+    metaclasses: list[str],
+) -> Any:
+    """Set the base metaclasses for a stereotype using Cameo's native API.
+
+    Use this instead of Groovy macros when defining custom profiles. It avoids
+    manual Extension wiring and keeps the model consistent.
+
+    Common examples:
+    - ["Class"] for stereotypes like logical or physical
+    - ["Property"] for stereotypes like mop or store
+
+    Args:
+        stereotype_id: The element ID of the target stereotype.
+        metaclasses: Non-empty list of UML metaclass names to bind.
+
+    Returns:
+        JSON confirmation with the stereotype and resolved base metaclasses.
+    """
+    result = await client.set_stereotype_metaclasses(
+        stereotype_id=stereotype_id,
+        metaclasses=metaclasses,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_apply_profile(
+    package_id: str,
+    profile_id: Optional[str] = None,
+    profile_name: Optional[str] = None,
+) -> Any:
+    """Apply a profile to a model/package so its stereotypes become usable.
+
+    Use this after creating a custom profile or before applying custom
+    stereotypes in a fresh model.
+
+    Args:
+        package_id: Package or model ID that should receive the profile.
+        profile_id: Explicit profile element ID to apply.
+        profile_name: Profile name to resolve when the ID is not known.
+
+    Returns:
+        JSON confirmation with the applied profile and package details.
+    """
+    result = await client.apply_profile(
+        package_id=package_id,
+        profile_id=profile_id,
+        profile_name=profile_name,
+    )
+    return _mcp_result(result)
 
 # -- Relationships ------------------------------------------------------------
 
@@ -321,7 +423,7 @@ async def cameo_create_relationship(
     target_id: str,
     name: Optional[str] = None,
     guard: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Create a relationship between two elements.
 
     Args:
@@ -349,14 +451,14 @@ async def cameo_create_relationship(
         name=name,
         guard=guard,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
 async def cameo_get_relationships(
     element_id: str,
     direction: str = "both",
-) -> str:
+) -> dict[str, Any]:
     """Get relationships for an element.
 
     Args:
@@ -371,13 +473,13 @@ async def cameo_get_relationships(
         element_id=element_id,
         direction=direction,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 # -- Diagrams -----------------------------------------------------------------
 
 
 @mcp.tool()
-async def cameo_list_diagrams() -> str:
+async def cameo_list_diagrams() -> dict[str, Any]:
     """List all diagrams in the current project.
 
     Returns:
@@ -385,7 +487,7 @@ async def cameo_list_diagrams() -> str:
         parent element IDs.
     """
     result = await client.list_diagrams()
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
@@ -393,7 +495,7 @@ async def cameo_create_diagram(
     type: str,
     name: str,
     parent_id: str,
-) -> str:
+) -> dict[str, Any]:
     """Create a new SysML or UML diagram.
 
     Args:
@@ -417,7 +519,7 @@ async def cameo_create_diagram(
         name=name,
         parent_id=parent_id,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
@@ -429,7 +531,7 @@ async def cameo_add_to_diagram(
     width: int = -1,
     height: int = -1,
     container_presentation_id: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Add a model element to a diagram canvas.
 
     Place an existing model element onto a diagram at the specified
@@ -459,10 +561,10 @@ async def cameo_add_to_diagram(
         height=height,
         container_presentation_id=container_presentation_id,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 @mcp.tool()
-async def cameo_get_diagram_image(diagram_id: str) -> str:
+async def cameo_get_diagram_image(diagram_id: str) -> dict[str, Any]:
     """Export a diagram as a base64-encoded PNG image.
 
     Returns a base64-encoded PNG. For large diagrams that exceed token limits,
@@ -476,11 +578,11 @@ async def cameo_get_diagram_image(diagram_id: str) -> str:
         JSON with base64-encoded image data and metadata (width, height).
     """
     result = await client.get_diagram_image(diagram_id)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
-async def cameo_auto_layout(diagram_id: str) -> str:
+async def cameo_auto_layout(diagram_id: str) -> dict[str, Any]:
     """Apply automatic layout to a diagram.
 
     Rearranges all shapes on the diagram using CATIA Magic's built-in
@@ -493,14 +595,14 @@ async def cameo_auto_layout(diagram_id: str) -> str:
         JSON confirmation of the layout operation.
     """
     result = await client.auto_layout(diagram_id)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 # -- Diagram Shape Management -------------------------------------------------
 
 
 @mcp.tool()
-async def cameo_list_diagram_shapes(diagram_id: str) -> str:
+async def cameo_list_diagram_shapes(diagram_id: str) -> dict[str, Any]:
     """List all shapes and relationship paths currently on a diagram.
 
     Returns every presentation element (shape, path, label) on the diagram
@@ -525,14 +627,14 @@ async def cameo_list_diagram_shapes(diagram_id: str) -> str:
         reference info (elementId, name, type).
     """
     result = await client.list_diagram_shapes(diagram_id)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
 async def cameo_move_shapes(
     diagram_id: str,
     shapes: list[dict],
-) -> str:
+) -> dict[str, Any]:
     """Move and/or resize shapes on a diagram canvas.
 
     Repositions one or more shapes to new coordinates and/or dimensions.
@@ -567,14 +669,14 @@ async def cameo_move_shapes(
         diagram_id=diagram_id,
         shapes=shapes,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
 async def cameo_delete_shapes(
     diagram_id: str,
     presentation_ids: list[str],
-) -> str:
+) -> dict[str, Any]:
     """Delete presentation elements (shapes/paths) from a diagram canvas.
 
     This removes the visual representation of elements from the diagram
@@ -601,14 +703,14 @@ async def cameo_delete_shapes(
         diagram_id=diagram_id,
         presentation_ids=presentation_ids,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
 async def cameo_add_diagram_paths(
     diagram_id: str,
     paths: list[dict],
-) -> str:
+) -> dict[str, Any]:
     """Add relationship lines (paths) to a diagram.
 
     Draws visual paths on the diagram for existing model relationships.
@@ -644,7 +746,7 @@ async def cameo_add_diagram_paths(
         diagram_id=diagram_id,
         paths=paths,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
@@ -652,7 +754,7 @@ async def cameo_set_shape_properties(
     diagram_id: str,
     presentation_id: str,
     properties: dict,
-) -> str:
+) -> dict[str, Any]:
     """Set display properties on a specific diagram shape.
 
     Controls how a shape is visually rendered on the diagram — what
@@ -696,14 +798,14 @@ async def cameo_set_shape_properties(
         presentation_id=presentation_id,
         properties=properties,
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 # -- Specification -----------------------------------------------------------
 
 
 @mcp.tool()
-async def cameo_get_specification(element_id: str) -> str:
+async def cameo_get_specification(element_id: str) -> dict[str, Any]:
     """Get the full specification of a model element — all UML properties, stereotype tagged values, and constraint fields.
 
     This is the programmatic equivalent of opening the Specification window
@@ -723,7 +825,7 @@ async def cameo_get_specification(element_id: str) -> str:
         Pre Condition, Post Condition, Goal, Assumption).
     """
     result = await client.get_specification(element_id)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 @mcp.tool()
@@ -731,7 +833,7 @@ async def cameo_set_specification(
     element_id: str,
     properties: Optional[dict] = None,
     constraints: Optional[dict] = None,
-) -> str:
+) -> dict[str, Any]:
     """Set properties and/or constraint fields on a model element's specification.
 
     This is the programmatic equivalent of editing fields in the
@@ -769,14 +871,14 @@ async def cameo_set_specification(
     result = await client.set_specification(
         element_id, properties=properties, constraints=constraints
     )
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 # -- Macros -------------------------------------------------------------------
 
 
 @mcp.tool()
-async def cameo_execute_macro(script: str) -> str:
+async def cameo_execute_macro(script: str) -> dict[str, Any]:
     """Execute a Groovy script inside CATIA Magic's JVM.
 
     This is an escape hatch for operations not covered by other tools.
@@ -795,7 +897,7 @@ async def cameo_execute_macro(script: str) -> str:
         JSON with script output, return value, and any errors.
     """
     result = await client.execute_macro(script)
-    return json.dumps(result, indent=2)
+    return _mcp_result(result)
 
 
 # -- Entry Point --------------------------------------------------------------

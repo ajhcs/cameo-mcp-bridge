@@ -119,6 +119,7 @@ async def create_element(
     documentation: Optional[str] = None,
     behavior_id: Optional[str] = None,
     represents_id: Optional[str] = None,
+    metaclasses: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Create a new model element."""
     body: dict[str, Any] = {
@@ -134,6 +135,8 @@ async def create_element(
         body["behaviorId"] = behavior_id
     if represents_id is not None:
         body["representsId"] = represents_id
+    if metaclasses is not None:
+        body["metaclasses"] = metaclasses
     return await _request("POST", "/elements", json_body=body)
 
 
@@ -181,6 +184,29 @@ async def set_tagged_values(
         "values": values,
     }
     return await _request("PUT", f"/elements/{element_id}/tagged-values", json_body=body)
+
+
+async def set_stereotype_metaclasses(
+    stereotype_id: str,
+    metaclasses: list[str],
+) -> dict[str, Any]:
+    """Set the base metaclasses for a stereotype using Cameo's supported API."""
+    body: dict[str, Any] = {"metaclasses": metaclasses}
+    return await _request("PUT", f"/elements/{stereotype_id}/metaclasses", json_body=body)
+
+
+async def apply_profile(
+    package_id: str,
+    profile_id: Optional[str] = None,
+    profile_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Apply a profile to a model/package."""
+    body: dict[str, Any] = {}
+    if profile_id is not None:
+        body["profileId"] = profile_id
+    if profile_name is not None:
+        body["profileName"] = profile_name
+    return await _request("POST", f"/elements/{package_id}/apply-profile", json_body=body)
 
 # -- Relationships ------------------------------------------------------------
 
@@ -324,6 +350,21 @@ async def get_containment_tree(
     if depth is not None:
         params["depth"] = str(depth)
     return await _request("GET", "/containment-tree", params=params)
+
+
+async def list_containment_children(
+    root_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List a compact, paginated slice of the containment tree."""
+    params: dict[str, Any] = {
+        "limit": str(limit),
+        "offset": str(offset),
+    }
+    if root_id is not None:
+        params["rootId"] = root_id
+    return await _request("GET", "/containment-tree/children", params=params)
 
 
 # -- Specification -----------------------------------------------------------

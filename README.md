@@ -74,8 +74,8 @@ All write operations are session-wrapped for undo/redo support. Read operations 
 ## Prerequisites
 
 - **CATIA Magic / Cameo Systems Modeler** 2024x or newer (any bundle: Systems of Systems Architect, Cyber Systems Engineer, etc.)
-- **Java 17** (ships with CATIA Magic, or provide your own)
-- **Python 3.10+** with pip
+- **Java 17 JDK** available to Gradle
+- **Python 3.10+** with `pip`
 - **Gradle 8.x** (wrapper included)
 
 ## Installation
@@ -89,14 +89,18 @@ cd cameo-mcp-bridge
 # Set your Cameo install path (default: D:/DevTools/CatiaMagic)
 export CAMEO_HOME="/path/to/your/CatiaMagic"
 
+# Optional: point the installer/Gradle at a Java 17 JDK explicitly
+export JDK17_HOME="/path/to/jdk-17"
+
 ./install.sh
 ```
 
 The install script:
-1. Builds the Java plugin with Gradle
+1. Builds the Java plugin with Gradle and passes `CAMEO_HOME` through automatically
 2. Deploys it to `$CAMEO_HOME/plugins/com.claude.cameo.bridge/`
-3. Installs the Python MCP server (`pip install -e ./mcp-server`)
-4. Registers the MCP server with Claude Code
+3. Creates or reuses `mcp-server/.venv/` when not already inside a virtualenv
+4. Installs the Python MCP server into that environment
+5. Registers the MCP server with Claude Code when the `claude` CLI is available
 
 ### Manual Install
 
@@ -104,8 +108,10 @@ The install script:
 
 ```bash
 cd plugin
-./gradlew assemblePlugin -PcameoHome="/path/to/CatiaMagic"
+./gradlew assemblePlugin -PcameoHome="/path/to/CatiaMagic" -Pjdk17Home="/path/to/jdk-17"
 ```
+
+Gradle must run on a Java 17 JDK. You can also set `JDK17_HOME` or `JAVA17_HOME` instead of passing `-Pjdk17Home=...`.
 
 **2. Deploy to Cameo:**
 
@@ -118,17 +124,23 @@ Copy the contents of `plugin/build/plugin-dist/com.claude.cameo.bridge/` to:
 
 ```bash
 cd mcp-server
-pip install -e .
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
 ```
+
+On Windows shells, use `.venv\\Scripts\\activate` instead.
 
 **4. Register with your MCP client:**
 
 For Claude Code:
 ```bash
-claude mcp add cameo-bridge --scope user -- python -m cameo_mcp.server
+claude mcp add cameo-bridge --scope user -- /absolute/path/to/mcp-server/.venv/bin/python -m cameo_mcp.server
 ```
 
-For other MCP clients, configure stdio transport with command `python -m cameo_mcp.server`.
+On Windows, the interpreter path is typically `.venv\\Scripts\\python.exe`.
+
+For other MCP clients, configure stdio transport with the venv interpreter and command `-m cameo_mcp.server`.
 
 **5. Restart CATIA Magic**, open a project, and verify:
 
@@ -141,6 +153,9 @@ For other MCP clients, configure stdio transport with command `python -m cameo_m
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `CAMEO_BRIDGE_PORT` | `18740` | HTTP port for the bridge (must match both sides) |
+| `JDK17_HOME` | unset | Optional Java 17 home used by `install.sh` and Gradle |
+| `JAVA17_HOME` | unset | Alternate Java 17 home override |
+| `CAMEO_MCP_STRUCTURED_RESPONSES` | unset | Set to `1` to opt into native MCP object responses instead of legacy JSON strings |
 
 The Java plugin reads the port from system property `cameo.mcp.port` (default `18740`). To change it, add to your Cameo `*.vmoptions` file:
 
@@ -152,7 +167,7 @@ And set `CAMEO_BRIDGE_PORT=18741` in your environment before launching Claude Co
 
 ## Tool Reference
 
-### Project & Session (3 tools)
+### Project & Session (4 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -161,7 +176,7 @@ And set `CAMEO_BRIDGE_PORT=18741` in your environment before launching Claude Co
 | `cameo_save_project` | Save the project to disk |
 | `cameo_reset_session` | Force-close a stuck editing session (recovery tool) |
 
-### Elements (6 tools)
+### Elements (8 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -171,15 +186,26 @@ And set `CAMEO_BRIDGE_PORT=18741` in your environment before launching Claude Co
 | `cameo_modify_element` | Change name or documentation |
 | `cameo_delete_element` | Remove an element and its children |
 | `cameo_get_containment_tree` | Browse the project hierarchy |
+| `cameo_list_containment_children` | Page through immediate children for large models |
+| `cameo_apply_profile` | Apply a profile to a model/package so custom stereotypes become usable |
 
-**Supported element types:** Package, Class, Block, Property, Port, Activity, StateMachine, Interaction, UseCase, Actor, Requirement, InterfaceBlock, ConstraintBlock, ValueType, DataType, Signal, Enumeration, Component, Comment, Constraint, CallBehaviorAction, OpaqueAction, ActivityPartition, InitialNode, ActivityFinalNode, FlowFinalNode, DecisionNode, MergeNode, ForkNode, JoinNode, InputPin, OutputPin, Operation
+**Supported element types:** Package, Profile, Stereotype, Class, Block, Property, Port, Activity, StateMachine, Interaction, UseCase, Actor, Requirement, InterfaceBlock, ConstraintBlock, ValueType, DataType, Signal, Enumeration, Component, Comment, Constraint, CallBehaviorAction, OpaqueAction, ActivityPartition, InitialNode, ActivityFinalNode, FlowFinalNode, DecisionNode, MergeNode, ForkNode, JoinNode, InputPin, OutputPin, Operation
 
-### Stereotypes & Tagged Values (2 tools)
+For large projects, prefer `cameo_list_containment_children` over `cameo_get_containment_tree`. The recursive tree endpoint is still available for compatibility, but it can produce very large responses on real models.
+
+### Stereotypes & Tagged Values (3 tools)
 
 | Tool | Description |
 |------|-------------|
 | `cameo_apply_stereotype` | Apply a stereotype (e.g., `<<block>>`, `<<requirement>>`) |
 | `cameo_set_tagged_values` | Set tagged values on a stereotyped element |
+| `cameo_set_stereotype_metaclasses` | Bind a stereotype to UML metaclasses using Cameo's supported API |
+
+If you create a custom profile through MCP, the typical sequence is:
+1. Create the `Profile`
+2. Create `Stereotype` elements inside it, optionally with `metaclasses=[...]`
+3. Call `cameo_apply_profile` on the target model/package
+4. Apply the new stereotypes to model elements
 
 ### Relationships (2 tools)
 

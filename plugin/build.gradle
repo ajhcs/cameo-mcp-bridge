@@ -8,7 +8,7 @@ def cameoHome = project.hasProperty('cameoHome')
 
 def jdk17Home = project.hasProperty('jdk17Home')
     ? project.property('jdk17Home')
-    : 'D:/DevTools/jdk17/jdk-17.0.18+8'
+    : (System.getenv('JDK17_HOME') ?: System.getenv('JAVA17_HOME'))
 
 sourceCompatibility = '17'
 targetCompatibility = '17'
@@ -38,8 +38,11 @@ dependencies {
 
 tasks.named('compileJava') {
     options.compilerArgs += ['-Xlint:-deprecation', '-Xlint:-unchecked']
-    options.fork = true
-    options.forkOptions.executable = "${jdk17Home}/bin/javac.exe"
+    if (jdk17Home) {
+        options.fork = true
+        options.forkOptions.javaHome = file(jdk17Home)
+    }
+    options.release = 17
 }
 
 jar {

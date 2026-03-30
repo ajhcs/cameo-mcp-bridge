@@ -39,6 +39,7 @@ public class HttpBridgeServer {
         server.createContext("/api/v1/status", this::handleStatus);
         server.createContext("/api/v1/project", new ProjectHandler());
         server.createContext("/api/v1/containment-tree", new ContainmentTreeHandler());
+        server.createContext("/api/v1/containment-tree/children", new ContainmentTreeHandler());
 
         // Route /elements by HTTP method and sub-path
         ElementQueryHandler queryHandler = new ElementQueryHandler();
