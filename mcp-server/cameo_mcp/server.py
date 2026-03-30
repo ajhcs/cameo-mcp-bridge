@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -19,12 +17,16 @@ mcp = FastMCP(
 )
 
 
-def _mcp_result(result: dict[str, Any]) -> Any:
-    """Preserve legacy JSON-string responses unless explicitly disabled."""
-    structured = os.environ.get("CAMEO_MCP_STRUCTURED_RESPONSES", "").lower()
-    if structured in {"1", "true", "yes", "on"}:
-        return result
-    return json.dumps(result, separators=(",", ":"), ensure_ascii=False)
+def _mcp_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Return native MCP objects.
+
+    Older bridge builds serialized tool results to JSON strings so legacy
+    clients could parse them manually. Newer MCP runtimes validate tool
+    results against the annotated return schema, so returning strings here
+    causes every `dict[...]` tool to fail validation before the payload
+    reaches the client.
+    """
+    return result
 
 
 # -- Status / Project --------------------------------------------------------

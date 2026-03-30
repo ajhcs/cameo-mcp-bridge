@@ -148,6 +148,10 @@ For other MCP clients, configure stdio transport with the venv interpreter and c
 > Check cameo status
 ```
 
+If a newly added MCP tool returns HTTP 404 after an update, the Python server
+and Java plugin are out of sync. Rebuild/redeploy the plugin, then restart
+CATIA Magic so the new HTTP handlers are loaded.
+
 ## Configuration
 
 | Environment Variable | Default | Description |
@@ -155,7 +159,7 @@ For other MCP clients, configure stdio transport with the venv interpreter and c
 | `CAMEO_BRIDGE_PORT` | `18740` | HTTP port for the bridge (must match both sides) |
 | `JDK17_HOME` | unset | Optional Java 17 home used by `install.sh` and Gradle |
 | `JAVA17_HOME` | unset | Alternate Java 17 home override |
-| `CAMEO_MCP_STRUCTURED_RESPONSES` | unset | Set to `1` to opt into native MCP object responses instead of legacy JSON strings |
+| `CAMEO_MCP_STRUCTURED_RESPONSES` | deprecated | Structured MCP object responses are now always used; this flag is kept only for backward compatibility with older docs |
 
 The Java plugin reads the port from system property `cameo.mcp.port` (default `18740`). To change it, add to your Cameo `*.vmoptions` file:
 
