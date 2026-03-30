@@ -21,8 +21,10 @@ import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -35,6 +37,12 @@ public class ElementQueryHandler implements HttpHandler {
     private static final String PREFIX = "/api/v1/elements/";
     private static final int DEFAULT_LIMIT = 200;
     private static final int MAX_LIMIT = 1000;
+    private static final String VIEW_COMPACT = "compact";
+    private static final String VIEW_FULL = "full";
+    private static final Comparator<Element> ELEMENT_ORDER = Comparator
+            .comparing(ElementQueryHandler::safeType, String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(ElementQueryHandler::safeName, String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(Element::getID, String.CASE_INSENSITIVE_ORDER);
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -73,6 +81,8 @@ public class ElementQueryHandler implements HttpHandler {
                         "Unknown endpoint: " + path);
             }
 
+        } catch (ValidationException e) {
+            HttpBridgeServer.sendError(exchange, 400, "INVALID_PARAM", e.getMessage());
         } catch (IllegalArgumentException e) {
             HttpBridgeServer.sendError(exchange, 404, "NOT_FOUND", e.getMessage());
         } catch (Exception e) {
@@ -94,27 +104,18 @@ public class ElementQueryHandler implements HttpHandler {
 
     private void handleQueryElements(HttpExchange exchange) throws Exception {
         Map<String, String> params = JsonHelper.parseQuery(exchange);
-        String typeFilter = params.get("type");
-        String nameFilter = params.get("name");
-        String packageId = params.get("package");
-        String stereotypeFilter = params.get("stereotype");
-        boolean recursive = !"false".equalsIgnoreCase(params.get("recursive"));
-
-        int limit = DEFAULT_LIMIT;
-        String limitStr = params.get("limit");
-        if (limitStr != null) {
-            try {
-                limit = Math.min(Math.max(Integer.parseInt(limitStr), 1), MAX_LIMIT);
-            } catch (NumberFormatException e) {
-                // keep default
-            }
-        }
-
-        final int finalLimit = limit;
+        String typeFilter = normalizeOptional(params.get("type"));
+        String nameFilter = normalizeOptional(params.get("name"));
+        String packageId = normalizeOptional(params.get("package"));
+        String stereotypeFilter = normalizeOptional(params.get("stereotype"));
+        boolean recursive = parseBoolean(params.get("recursive"), true, "recursive");
+        String view = normalizeView(params.get("view"));
+        int limit = parseLimit(params.get("limit"));
+        int offset = parseOffset(params.get("offset"));
 
         JsonObject result = EdtDispatcher.read(project -> {
             Element scope;
-            if (packageId != null && !packageId.isEmpty()) {
+            if (packageId != null) {
                 scope = (Element) project.getElementByID(packageId);
                 if (scope == null) {
                     throw new IllegalArgumentException("Package element not found: " + packageId);
@@ -127,12 +128,15 @@ public class ElementQueryHandler implements HttpHandler {
             }
 
             Class<?> metaclass = null;
-            if (typeFilter != null && !typeFilter.isEmpty()) {
+            if (typeFilter != null) {
                 metaclass = resolveMetaclass(typeFilter);
+                if (metaclass == null) {
+                    throw new ValidationException("Unknown type filter: " + typeFilter);
+                }
             }
 
             Collection<? extends Element> candidates;
-            if (metaclass != null && nameFilter != null && !nameFilter.isEmpty()) {
+            if (metaclass != null && nameFilter != null) {
                 if (recursive) {
                     candidates = Finder.byNameAllRecursively().find(scope, metaclass, nameFilter);
                 } else {
@@ -144,7 +148,7 @@ public class ElementQueryHandler implements HttpHandler {
                 } else {
                     candidates = Finder.byType().find(scope, metaclass);
                 }
-            } else if (nameFilter != null && !nameFilter.isEmpty()) {
+            } else if (nameFilter != null) {
                 if (recursive) {
                     candidates = Finder.byNameAllRecursively().find(
                             scope, NamedElement.class, nameFilter);
@@ -162,26 +166,63 @@ public class ElementQueryHandler implements HttpHandler {
             }
 
             List<Element> filtered = new ArrayList<>();
-            int count = 0;
             for (Element el : candidates) {
-                if (count >= finalLimit) break;
-                if (stereotypeFilter != null && !stereotypeFilter.isEmpty()) {
+                if (stereotypeFilter != null) {
                     if (!hasMatchingStereotype(el, stereotypeFilter)) {
                         continue;
                     }
                 }
                 filtered.add(el);
-                count++;
             }
 
+            filtered.sort(ELEMENT_ORDER);
+
+            int totalCount = filtered.size();
+            int pageOffset = Math.min(offset, totalCount);
+            int pageEnd = Math.min(pageOffset + limit, totalCount);
+
             JsonArray elements = new JsonArray();
-            for (Element el : filtered) {
-                elements.add(ElementSerializer.toJsonCompact(el));
+            for (int i = pageOffset; i < pageEnd; i++) {
+                Element el = filtered.get(i);
+                if (VIEW_FULL.equals(view)) {
+                    elements.add(ElementSerializer.toJson(el));
+                } else {
+                    elements.add(ElementSerializer.toJsonCompact(el));
+                }
             }
 
             JsonObject response = new JsonObject();
-            response.addProperty("count", filtered.size());
-            response.addProperty("limit", finalLimit);
+            response.addProperty("view", view);
+            response.addProperty("count", elements.size());
+            response.addProperty("returned", elements.size());
+            response.addProperty("totalCount", totalCount);
+            response.addProperty("limit", limit);
+            response.addProperty("offset", pageOffset);
+            response.addProperty("hasMore", pageEnd < totalCount);
+            if (pageEnd < totalCount) {
+                response.addProperty("nextOffset", pageEnd);
+                response.addProperty("nextCursor", cursorToken(pageEnd));
+            }
+            if (pageOffset > 0) {
+                int previousOffset = Math.max(0, pageOffset - limit);
+                response.addProperty("previousOffset", previousOffset);
+                response.addProperty("previousCursor", cursorToken(previousOffset));
+            }
+            JsonObject filters = new JsonObject();
+            if (typeFilter != null) {
+                filters.addProperty("type", typeFilter);
+            }
+            if (nameFilter != null) {
+                filters.addProperty("name", nameFilter);
+            }
+            if (packageId != null) {
+                filters.addProperty("package", packageId);
+            }
+            if (stereotypeFilter != null) {
+                filters.addProperty("stereotype", stereotypeFilter);
+            }
+            filters.addProperty("recursive", recursive);
+            response.add("filters", filters);
             response.add("elements", elements);
             return response;
         });
@@ -291,7 +332,8 @@ public class ElementQueryHandler implements HttpHandler {
             List<Stereotype> stereotypes = StereotypesHelper.getStereotypes(element);
             if (stereotypes != null) {
                 for (Stereotype st : stereotypes) {
-                    if (st.getName().equalsIgnoreCase(stereotypeName)) {
+                    String name = st.getName();
+                    if (name != null && name.equalsIgnoreCase(stereotypeName)) {
                         return true;
                     }
                 }
@@ -391,5 +433,104 @@ public class ElementQueryHandler implements HttpHandler {
         json.add("relatedElements", relatedElements);
 
         return json;
+    }
+
+    private static String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static boolean parseBoolean(String rawValue, boolean defaultValue, String name) {
+        String value = normalizeOptional(rawValue);
+        if (value == null) {
+            return defaultValue;
+        }
+        if ("true".equalsIgnoreCase(value)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(value)) {
+            return false;
+        }
+        throw new ValidationException(name + " must be 'true' or 'false'");
+    }
+
+    private static String normalizeView(String rawValue) {
+        String value = normalizeOptional(rawValue);
+        if (value == null) {
+            return VIEW_COMPACT;
+        }
+        String normalized = value.toLowerCase(Locale.ROOT);
+        if (VIEW_COMPACT.equals(normalized) || VIEW_FULL.equals(normalized)) {
+            return normalized;
+        }
+        throw new ValidationException("view must be either 'compact' or 'full'");
+    }
+
+    private static int parseLimit(String rawValue) {
+        String value = normalizeOptional(rawValue);
+        if (value == null) {
+            return DEFAULT_LIMIT;
+        }
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 1) {
+                throw new ValidationException("limit must be greater than zero");
+            }
+            return Math.min(parsed, MAX_LIMIT);
+        } catch (NumberFormatException e) {
+            throw new ValidationException("limit must be an integer");
+        }
+    }
+
+    private static int parseOffset(String rawValue) {
+        String value = normalizeOptional(rawValue);
+        if (value == null) {
+            return 0;
+        }
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 0) {
+                throw new ValidationException("offset must be zero or greater");
+            }
+            return parsed;
+        } catch (NumberFormatException e) {
+            throw new ValidationException("offset must be an integer");
+        }
+    }
+
+    private static String cursorToken(int offset) {
+        return "offset:" + offset;
+    }
+
+    private static String safeType(Element element) {
+        try {
+            String shortName = ClassTypes.getShortName(element.getClassType());
+            if (shortName != null && !shortName.isEmpty()) {
+                return shortName;
+            }
+        } catch (Exception e) {
+            // Fall through to human type.
+        }
+        String humanType = element.getHumanType();
+        return humanType != null ? humanType : "";
+    }
+
+    private static String safeName(Element element) {
+        if (element instanceof NamedElement) {
+            String name = ((NamedElement) element).getName();
+            if (name != null) {
+                return name;
+            }
+        }
+        return "";
+    }
+
+    private static final class ValidationException extends RuntimeException {
+        private ValidationException(String message) {
+            super(message);
+        }
     }
 }

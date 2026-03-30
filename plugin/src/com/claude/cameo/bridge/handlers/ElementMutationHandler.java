@@ -7,10 +7,12 @@ import com.claude.cameo.bridge.util.JsonHelper;
 import com.nomagic.magicdraw.openapi.uml.ModelElementsManager;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Package;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
+import com.nomagic.uml2.ext.magicdraw.mdusecases.UseCase;
 import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
 import com.nomagic.uml2.ext.magicdraw.actions.mdbasicactions.CallBehaviorAction;
 import com.nomagic.uml2.ext.magicdraw.commonbehaviors.mdbasicbehaviors.Behavior;
@@ -54,6 +56,7 @@ public class ElementMutationHandler implements HttpHandler {
             if ("POST".equals(method) && "apply-profile".equals(subPath)) { handleApplyProfile(exchange, elementId); return; }
             if ("PUT".equals(method) && "metaclasses".equals(subPath)) { handleSetMetaclasses(exchange, elementId); return; }
             if ("PUT".equals(method) && "tagged-values".equals(subPath)) { handleSetTaggedValues(exchange, elementId); return; }
+            if ("PUT".equals(method) && "usecase-subject".equals(subPath)) { handleSetUseCaseSubject(exchange, elementId); return; }
             if ("PUT".equals(method) && subPath == null) { handleModifyElement(exchange, elementId); return; }
             if ("DELETE".equals(method) && subPath == null) { handleDeleteElement(exchange, elementId); return; }
             HttpBridgeServer.sendError(exchange, 404, "NOT_FOUND", "Unknown endpoint: " + method + " " + path);
@@ -310,6 +313,59 @@ public class ElementMutationHandler implements HttpHandler {
             response.addProperty("updated", true);
             response.addProperty("tagCount", setCount);
             response.add("element", ElementSerializer.toJson(element));
+            return response;
+        });
+        HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
+    private void handleSetUseCaseSubject(HttpExchange exchange, String elementId) throws Exception {
+        JsonObject body = JsonHelper.parseBody(exchange);
+        List<String> subjectIds = parseStringList(body, "subjectIds");
+        boolean append = body.has("append") && body.get("append").getAsBoolean();
+        if (subjectIds == null || subjectIds.isEmpty()) {
+            HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST",
+                    "subjectIds must be a non-empty array of classifier IDs");
+            return;
+        }
+
+        JsonObject result = EdtDispatcher.write("Set UseCase subject on " + elementId, project -> {
+            Element element = (Element) project.getElementByID(elementId);
+            if (!(element instanceof UseCase)) {
+                throw new IllegalArgumentException("Element is not a UseCase: " + elementId);
+            }
+
+            UseCase useCase = (UseCase) element;
+            Collection<Classifier> subjects = useCase.getSubject();
+            if (!append) {
+                subjects.clear();
+            }
+
+            JsonArray subjectArray = new JsonArray();
+            for (String subjectId : subjectIds) {
+                Element subjectElement = (Element) project.getElementByID(subjectId);
+                if (!(subjectElement instanceof Classifier)) {
+                    throw new IllegalArgumentException(
+                            "Subject element is not a Classifier: " + subjectId);
+                }
+                Classifier classifier = (Classifier) subjectElement;
+                if (!subjects.contains(classifier)) {
+                    subjects.add(classifier);
+                }
+                JsonObject subjectJson = new JsonObject();
+                subjectJson.addProperty("id", classifier.getID());
+                if (classifier instanceof NamedElement) {
+                    subjectJson.addProperty("name", ((NamedElement) classifier).getName());
+                }
+                subjectArray.add(subjectJson);
+            }
+
+            JsonObject response = new JsonObject();
+            response.addProperty("updated", true);
+            response.addProperty("elementId", useCase.getID());
+            response.addProperty("append", append);
+            response.addProperty("subjectCount", subjects.size());
+            response.add("subjects", subjectArray);
+            response.add("element", ElementSerializer.toJson(useCase));
             return response;
         });
         HttpBridgeServer.sendJson(exchange, 200, result);

@@ -2,7 +2,7 @@
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
 
-This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 26 tools covering elements, relationships, diagrams, specifications, and Groovy macro execution.
+This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 37 tools covering capability negotiation, methodology-aware OOSEM workflows, elements, relationships, diagrams, specifications, and Groovy macro execution.
 
 ```
 Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (Cameo JVM)
@@ -152,6 +152,15 @@ If a newly added MCP tool returns HTTP 404 after an update, the Python server
 and Java plugin are out of sync. Rebuild/redeploy the plugin, then restart
 CATIA Magic so the new HTTP handlers are loaded.
 
+The Python side now performs a capability handshake against the plugin before
+non-status operations. If `cameo_status` or `cameo_get_capabilities` reports
+`compatibility.clientCompatible = false`, stop and redeploy the matching plugin
+before proceeding.
+
+The Python MCP layer also ships a Phase 2 methodology surface for bounded
+OOSEM workflows. These tools build named artifact recipes, workflow guidance,
+conformance checks, and compact review packets on top of the low-level bridge.
+
 ## Configuration
 
 | Environment Variable | Default | Description |
@@ -171,26 +180,38 @@ And set `CAMEO_BRIDGE_PORT=18741` in your environment before launching Claude Co
 
 ## Tool Reference
 
-### Project & Session (4 tools)
+### Project & Session (5 tools)
 
 | Tool | Description |
 |------|-------------|
-| `cameo_status` | Check if Cameo is running and the plugin is responsive |
+| `cameo_status` | Check plugin health and report client/plugin compatibility |
+| `cameo_get_capabilities` | Get machine-readable endpoint/capability metadata |
 | `cameo_get_project` | Get project name, file path, and root model ID |
 | `cameo_save_project` | Save the project to disk |
 | `cameo_reset_session` | Force-close a stuck editing session (recovery tool) |
+
+### Methodology Packs (6 tools)
+
+| Tool | Description |
+|------|-------------|
+| `cameo_list_methodology_packs` | List built-in methodology packs such as `oosem` |
+| `cameo_get_methodology_pack` | Get one pack's phases, recipes, naming rules, and evidence structure |
+| `cameo_get_methodology_guidance` | Explain which artifact is missing next and why |
+| `cameo_execute_methodology_recipe` | Execute a bounded recipe and return receipts, conformance, and review packet output |
+| `cameo_validate_methodology_recipe` | Validate normalized artifact snapshots against recipe expectations |
+| `cameo_generate_review_packet` | Generate a compact evidence bundle and Markdown review packet without mutating the model |
 
 ### Elements (8 tools)
 
 | Tool | Description |
 |------|-------------|
-| `cameo_query_elements` | Search by type, name, package, stereotype |
+| `cameo_query_elements` | Search by type, name, package, stereotype, with paging and compact/full views |
 | `cameo_get_element` | Get full details of a single element |
 | `cameo_create_element` | Create a new model element (30+ types supported) |
 | `cameo_modify_element` | Change name or documentation |
 | `cameo_delete_element` | Remove an element and its children |
 | `cameo_get_containment_tree` | Browse the project hierarchy |
-| `cameo_list_containment_children` | Page through immediate children for large models |
+| `cameo_list_containment_children` | Page/filter immediate children for large models with compact/full views |
 | `cameo_apply_profile` | Apply a profile to a model/package so custom stereotypes become usable |
 
 **Supported element types:** Package, Profile, Stereotype, Class, Block, Property, Port, Activity, StateMachine, Interaction, UseCase, Actor, Requirement, InterfaceBlock, ConstraintBlock, ValueType, DataType, Signal, Enumeration, Component, Comment, Constraint, CallBehaviorAction, OpaqueAction, ActivityPartition, InitialNode, ActivityFinalNode, FlowFinalNode, DecisionNode, MergeNode, ForkNode, JoinNode, InputPin, OutputPin, Operation
@@ -220,20 +241,20 @@ If you create a custom profile through MCP, the typical sequence is:
 
 **Supported relationship types:** Association, DirectedAssociation, Composition, Generalization, Dependency, ControlFlow, ObjectFlow, Allocate, Satisfy, Derive, Refine, Trace, Include, Extend
 
-### Diagrams (9 tools)
+### Diagrams (10 tools)
 
 | Tool | Description |
 |------|-------------|
 | `cameo_list_diagrams` | List all diagrams in the project |
 | `cameo_create_diagram` | Create a new diagram (18 types supported) |
-| `cameo_add_to_diagram` | Place a model element on a diagram canvas |
+| `cameo_add_to_diagram` | Place a model element on a diagram canvas and return its `presentationId` |
 | `cameo_get_diagram_image` | Export a diagram as base64-encoded PNG |
 | `cameo_auto_layout` | Apply Cameo's built-in auto-layout |
-| `cameo_list_diagram_shapes` | List all shapes/paths with presentation IDs and bounds |
-| `cameo_move_shapes` | Reposition/resize shapes on a diagram |
+| `cameo_list_diagram_shapes` | List all shapes/paths with presentation IDs, bounds, and counts |
+| `cameo_move_shapes` | Reposition/resize shapes on a diagram with per-item results |
 | `cameo_delete_shapes` | Remove shapes from a diagram (model elements preserved) |
 | `cameo_add_diagram_paths` | Draw relationship paths between shapes on a diagram |
-| `cameo_set_shape_properties` | Set display properties (colors, compartment visibility, etc.) |
+| `cameo_set_shape_properties` | Set display properties (colors, compartment visibility, etc.) with receipts |
 
 **Supported diagram types:** Class, Package, UseCase, Activity, Sequence, StateMachine, Component, Deployment, CompositeStructure, Object, Communication, InteractionOverview, Timing, Profile, SysML BDD, SysML IBD, SysML Requirement, SysML Parametric
 
@@ -373,7 +394,11 @@ cameo-mcp-bridge/
     cameo_mcp/
       __init__.py
       client.py                        # HTTP client for the Java plugin
-      server.py                        # MCP tool definitions (26 tools)
+      server.py                        # MCP tool definitions (37 tools)
+      methodology/                     # Phase 2 pack registry + recipe runtime
+        registry.py
+        runtime.py
+        service.py
     pyproject.toml
   plugin/                              # Java Cameo plugin
     src/com/claude/cameo/bridge/

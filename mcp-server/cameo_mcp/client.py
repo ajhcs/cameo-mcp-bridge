@@ -7,6 +7,10 @@ from typing import Any, Optional
 
 import httpx
 
+BRIDGE_PLUGIN_VERSION = "1.0.0"
+BRIDGE_API_VERSION = "v1"
+BRIDGE_HANDSHAKE_VERSION = "1"
+
 
 def _base_url() -> str:
     port = os.environ.get("CAMEO_BRIDGE_PORT", "18740")
@@ -15,16 +19,72 @@ def _base_url() -> str:
 
 # Module-level singleton client for connection pooling and keepalive
 _shared_client: Optional[httpx.AsyncClient] = None
+_shared_client_base_url: Optional[str] = None
+_capabilities_cache: Optional[dict[str, Any]] = None
+_capabilities_cache_base_url: Optional[str] = None
 
 
 def _get_client() -> httpx.AsyncClient:
-    global _shared_client
-    if _shared_client is None or _shared_client.is_closed:
-        _shared_client = httpx.AsyncClient(base_url=_base_url(), timeout=30.0)
+    global _shared_client, _shared_client_base_url
+    base_url = _base_url()
+    if (
+        _shared_client is None
+        or _shared_client.is_closed
+        or _shared_client_base_url != base_url
+    ):
+        _shared_client = httpx.AsyncClient(base_url=base_url, timeout=30.0)
+        _shared_client_base_url = base_url
     return _shared_client
 
 
-async def _request(
+def _annotate_bridge_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    annotated = dict(metadata)
+    compatibility = dict(annotated.get("compatibility") or {})
+    errors: list[str] = []
+
+    plugin_version = annotated.get("pluginVersion") or annotated.get("version")
+    if plugin_version != BRIDGE_PLUGIN_VERSION:
+        errors.append(
+            "plugin version mismatch "
+            f"(expected {BRIDGE_PLUGIN_VERSION}, got {plugin_version or 'unknown'})"
+        )
+
+    handshake_version = annotated.get("handshakeVersion")
+    if handshake_version != BRIDGE_HANDSHAKE_VERSION:
+        errors.append(
+            "handshake version mismatch "
+            f"(expected {BRIDGE_HANDSHAKE_VERSION}, got {handshake_version or 'unknown'})"
+        )
+
+    api_version = annotated.get("apiVersion")
+    if api_version != BRIDGE_API_VERSION:
+        errors.append(
+            f"API version mismatch (expected {BRIDGE_API_VERSION}, got {api_version or 'unknown'})"
+        )
+
+    compatibility["clientExpectedPluginVersion"] = BRIDGE_PLUGIN_VERSION
+    compatibility["clientExpectedHandshakeVersion"] = BRIDGE_HANDSHAKE_VERSION
+    compatibility["clientExpectedApiVersion"] = BRIDGE_API_VERSION
+    compatibility["clientCompatible"] = not errors
+    compatibility["clientCompatibilityErrors"] = errors
+    annotated["compatibility"] = compatibility
+    return annotated
+
+
+def _require_compatible_bridge(metadata: dict[str, Any]) -> dict[str, Any]:
+    annotated = _annotate_bridge_metadata(metadata)
+    compatibility = annotated["compatibility"]
+    if not compatibility.get("clientCompatible", False):
+        errors = compatibility.get("clientCompatibilityErrors") or ["unknown incompatibility"]
+        raise RuntimeError(
+            "Incompatible CameoMCPBridge plugin: "
+            + "; ".join(str(error) for error in errors)
+            + ". Rebuild/redeploy the plugin and restart Cameo."
+        )
+    return annotated
+
+
+async def _request_raw(
     method: str,
     path: str,
     *,
@@ -36,8 +96,8 @@ async def _request(
     Raises a clear error when the plugin is unreachable.
     """
     try:
-        client = _get_client()
-        response = await client.request(
+        http_client = _get_client()
+        response = await http_client.request(
             method,
             path,
             params=params,
@@ -63,12 +123,46 @@ async def _request(
             f"CameoMCPBridge returned HTTP {exc.response.status_code}: {detail}"
         ) from None
 
+
+async def _ensure_compatible_bridge(force_refresh: bool = False) -> dict[str, Any]:
+    global _capabilities_cache, _capabilities_cache_base_url
+    base_url = _base_url()
+    if (
+        not force_refresh
+        and _capabilities_cache is not None
+        and _capabilities_cache_base_url == base_url
+    ):
+        return _require_compatible_bridge(_capabilities_cache)
+
+    metadata = await _request_raw("GET", "/capabilities")
+    annotated = _require_compatible_bridge(metadata)
+    _capabilities_cache = annotated
+    _capabilities_cache_base_url = base_url
+    return annotated
+
+
+async def _request(
+    method: str,
+    path: str,
+    *,
+    params: Optional[dict[str, Any]] = None,
+    json_body: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    if path not in {"/status", "/capabilities"}:
+        await _ensure_compatible_bridge()
+    return await _request_raw(method, path, params=params, json_body=json_body)
+
 # -- Status / Project --------------------------------------------------------
 
 
 async def status() -> dict[str, Any]:
     """Check plugin health."""
-    return await _request("GET", "/status")
+    return _annotate_bridge_metadata(await _request_raw("GET", "/status"))
+
+
+async def get_capabilities() -> dict[str, Any]:
+    """Get plugin capability and compatibility metadata."""
+    return _annotate_bridge_metadata(await _request_raw("GET", "/capabilities"))
 
 
 async def get_project() -> dict[str, Any]:
@@ -90,6 +184,9 @@ async def query_elements(
     package: Optional[str] = None,
     stereotype: Optional[str] = None,
     recursive: Optional[bool] = None,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+    view: Optional[str] = None,
 ) -> dict[str, Any]:
     """Search for model elements matching filters."""
     params: dict[str, Any] = {}
@@ -103,6 +200,12 @@ async def query_elements(
         params["stereotype"] = stereotype
     if recursive is not None:
         params["recursive"] = str(recursive).lower()
+    if limit is not None:
+        params["limit"] = str(limit)
+    if offset is not None:
+        params["offset"] = str(offset)
+    if view is not None:
+        params["view"] = view
     return await _request("GET", "/elements", params=params)
 
 
@@ -304,6 +407,14 @@ async def list_diagram_shapes(diagram_id: str) -> dict[str, Any]:
     return await _request("GET", f"/diagrams/{diagram_id}/shapes")
 
 
+async def get_shape_properties(
+    diagram_id: str,
+    presentation_id: str,
+) -> dict[str, Any]:
+    """Read the current display properties exposed by a diagram shape."""
+    return await _request("GET", f"/diagrams/{diagram_id}/shapes/{presentation_id}/properties")
+
+
 async def move_shapes(
     diagram_id: str,
     shapes: list[dict[str, Any]],
@@ -336,12 +447,50 @@ async def set_shape_properties(
     """Set display properties on a diagram shape."""
     return await _request("PUT", f"/diagrams/{diagram_id}/shapes/{presentation_id}/properties", json_body={"properties": properties})
 
+
+async def set_shape_compartments(
+    diagram_id: str,
+    presentation_id: str,
+    compartments: dict[str, Any],
+) -> dict[str, Any]:
+    """Set compartment-focused presentation controls on a diagram shape."""
+    return await _request(
+        "PUT",
+        f"/diagrams/{diagram_id}/shapes/{presentation_id}/compartments",
+        json_body={"compartments": compartments},
+    )
+
+
+async def reparent_shapes(
+    diagram_id: str,
+    reparentings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Move existing presentation elements under new container shapes."""
+    return await _request(
+        "PUT",
+        f"/diagrams/{diagram_id}/shapes/reparent",
+        json_body={"reparentings": reparentings},
+    )
+
+
+async def route_paths(
+    diagram_id: str,
+    routes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Update path breakpoints and endpoints for existing relationship paths."""
+    return await _request(
+        "PUT",
+        f"/diagrams/{diagram_id}/paths/route",
+        json_body={"routes": routes},
+    )
+
 # -- Containment Tree ---------------------------------------------------------
 
 
 async def get_containment_tree(
     root_id: Optional[str] = None,
     depth: Optional[int] = None,
+    view: Optional[str] = None,
 ) -> dict[str, Any]:
     """Browse the containment tree structure."""
     params: dict[str, Any] = {}
@@ -349,6 +498,8 @@ async def get_containment_tree(
         params["rootId"] = root_id
     if depth is not None:
         params["depth"] = str(depth)
+    if view is not None:
+        params["view"] = view
     return await _request("GET", "/containment-tree", params=params)
 
 
@@ -356,6 +507,10 @@ async def list_containment_children(
     root_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    type: Optional[str] = None,
+    name: Optional[str] = None,
+    stereotype: Optional[str] = None,
+    view: Optional[str] = None,
 ) -> dict[str, Any]:
     """List a compact, paginated slice of the containment tree."""
     params: dict[str, Any] = {
@@ -364,6 +519,14 @@ async def list_containment_children(
     }
     if root_id is not None:
         params["rootId"] = root_id
+    if type is not None:
+        params["type"] = type
+    if name is not None:
+        params["name"] = name
+    if stereotype is not None:
+        params["stereotype"] = stereotype
+    if view is not None:
+        params["view"] = view
     return await _request("GET", "/containment-tree/children", params=params)
 
 
@@ -387,6 +550,16 @@ async def set_specification(
     if constraints is not None:
         body["constraints"] = constraints
     return await _request("PUT", f"/elements/{element_id}/specification", json_body=body)
+
+
+async def set_usecase_subject(
+    element_id: str,
+    subject_ids: list[str],
+    append: bool = False,
+) -> dict[str, Any]:
+    """Set or append subject classifiers on a UseCase."""
+    body: dict[str, Any] = {"subjectIds": subject_ids, "append": append}
+    return await _request("PUT", f"/elements/{element_id}/usecase-subject", json_body=body)
 
 
 # -- Session Management -------------------------------------------------------

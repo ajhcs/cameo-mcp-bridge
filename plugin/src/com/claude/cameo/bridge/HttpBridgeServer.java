@@ -8,6 +8,7 @@ import com.claude.cameo.bridge.handlers.MacroHandler;
 import com.claude.cameo.bridge.handlers.ProjectHandler;
 import com.claude.cameo.bridge.handlers.RelationshipHandler;
 import com.claude.cameo.bridge.handlers.SpecificationHandler;
+import com.claude.cameo.bridge.util.BridgeCapabilities;
 import com.nomagic.magicdraw.core.Application;
 import com.nomagic.magicdraw.core.Project;
 import com.nomagic.magicdraw.openapi.uml.SessionManager;
@@ -37,6 +38,7 @@ public class HttpBridgeServer {
 
     private void registerHandlers() {
         server.createContext("/api/v1/status", this::handleStatus);
+        server.createContext("/api/v1/capabilities", this::handleCapabilities);
         server.createContext("/api/v1/project", new ProjectHandler());
         server.createContext("/api/v1/containment-tree", new ContainmentTreeHandler());
         server.createContext("/api/v1/containment-tree/children", new ContainmentTreeHandler());
@@ -72,16 +74,35 @@ public class HttpBridgeServer {
     }
 
     private void handleStatus(HttpExchange exchange) throws IOException {
-        if (!"GET".equals(exchange.getRequestMethod())) {
-            sendError(exchange, 405, "METHOD_NOT_ALLOWED", "Only GET is supported");
+        if (!allowGetOrOptions(exchange, "GET")) {
             return;
         }
-        JsonObject response = new JsonObject();
-        response.addProperty("status", "ok");
-        response.addProperty("plugin", "CameoMCPBridge");
-        response.addProperty("version", "1.0.0");
-        response.addProperty("port", server.getAddress().getPort());
+
+        JsonObject response = BridgeCapabilities.buildStatus(server.getAddress().getPort());
         sendJson(exchange, 200, response);
+    }
+
+    private void handleCapabilities(HttpExchange exchange) throws IOException {
+        if (!allowGetOrOptions(exchange, "GET")) {
+            return;
+        }
+
+        JsonObject response = BridgeCapabilities.buildCapabilities(server.getAddress().getPort());
+        sendJson(exchange, 200, response);
+    }
+
+    private boolean allowGetOrOptions(HttpExchange exchange, String allowedMethod) throws IOException {
+        if ("OPTIONS".equals(exchange.getRequestMethod())) {
+            exchange.getResponseHeaders().set("Access-Control-Allow-Methods", allowedMethod + ", OPTIONS");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+            exchange.sendResponseHeaders(204, -1);
+            return false;
+        }
+        if (!allowedMethod.equals(exchange.getRequestMethod())) {
+            sendError(exchange, 405, "METHOD_NOT_ALLOWED", "Only " + allowedMethod + " is supported");
+            return false;
+        }
+        return true;
     }
 
     /**

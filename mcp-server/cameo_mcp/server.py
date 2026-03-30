@@ -7,6 +7,14 @@ from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 
 from cameo_mcp import client
+from cameo_mcp.methodology import (
+    execute_methodology_recipe,
+    generate_review_packet,
+    get_methodology_pack,
+    get_workflow_guidance,
+    list_methodology_packs,
+    validate_methodology_recipe,
+)
 
 mcp = FastMCP(
     "CameoMCPBridge",
@@ -37,10 +45,186 @@ async def cameo_status() -> dict[str, Any]:
     """Check if CATIA Magic is running and the CameoMCPBridge plugin is responsive.
 
     Returns:
-        JSON with plugin status, CATIA Magic version, and connection info.
+        JSON with plugin status, capability metadata, and client compatibility
+        annotations. If `compatibility.clientCompatible` is false, rebuild and
+        redeploy the plugin before attempting write operations.
     """
     result = await client.status()
     return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_capabilities() -> dict[str, Any]:
+    """Get machine-readable plugin capabilities and version-lockstep metadata.
+
+    Use this to confirm which bridge contract the installed Java plugin
+    exposes before relying on newer query or diagram semantics.
+
+    Returns:
+        JSON with endpoint groups, versions, and client compatibility fields.
+    """
+    result = await client.get_capabilities()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_methodology_packs() -> dict[str, Any]:
+    """List built-in methodology packs available in the Phase 2 copilot layer.
+
+    Returns:
+        JSON with each pack's phases, recipes, review sections, and evidence
+        expectations.
+    """
+    return _mcp_result(list_methodology_packs())
+
+
+@mcp.tool()
+async def cameo_get_methodology_pack(pack_id: str) -> dict[str, Any]:
+    """Get one methodology pack definition.
+
+    Args:
+        pack_id: Pack identifier such as `"oosem"`.
+
+    Returns:
+        JSON with the selected pack's recipes, phases, naming rules,
+        mandatory relationships, and review/evidence structure.
+    """
+    return _mcp_result(get_methodology_pack(pack_id))
+
+
+@mcp.tool()
+async def cameo_get_methodology_guidance(
+    pack_id: str,
+    recipe_id: Optional[str] = None,
+    recipe_parameters: Optional[dict] = None,
+    completed_artifacts: Optional[list[dict]] = None,
+) -> dict[str, Any]:
+    """Explain what artifact work is missing next for a methodology pack.
+
+    Args:
+        pack_id: Pack identifier such as `"oosem"`.
+        recipe_id: Optional specific recipe to assess. Omit to get the first
+            pending recipe for the pack.
+        recipe_parameters: Optional parameter values used to materialize
+            recipe-specific names and artifacts.
+        completed_artifacts: Optional normalized artifact snapshots already
+            present, each shaped like `{"key","kind","name","element_id"}`.
+
+    Returns:
+        JSON with blockers, missing artifacts, and recommended next actions.
+    """
+    return _mcp_result(
+        get_workflow_guidance(
+            pack_id=pack_id,
+            recipe_id=recipe_id,
+            recipe_parameters=recipe_parameters,
+            completed_artifacts=completed_artifacts,
+        )
+    )
+
+
+@mcp.tool()
+async def cameo_execute_methodology_recipe(
+    pack_id: str,
+    recipe_id: str,
+    root_package_id: str,
+    recipe_parameters: dict,
+    completed_artifacts: Optional[list[dict]] = None,
+    assumptions: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Execute a bounded OOSEM methodology recipe through structured bridge calls.
+
+    This Phase 2 layer orchestrates existing low-level bridge operations into
+    named artifact workflows and returns validation plus a compact review
+    packet by default.
+
+    Args:
+        pack_id: Pack identifier such as `"oosem"`.
+        recipe_id: Recipe identifier from the selected pack.
+        root_package_id: Parent package/model that will own the new artifact set.
+        recipe_parameters: Parameter values for the recipe.
+        completed_artifacts: Optional normalized artifact snapshots already
+            present and available for trace/allocation linkage.
+        assumptions: Optional assumptions to include in the evidence bundle.
+
+    Returns:
+        JSON with workflow guidance, execution plan, receipts, conformance, and
+        review-packet markdown.
+    """
+    return _mcp_result(
+        await execute_methodology_recipe(
+            pack_id=pack_id,
+            recipe_id=recipe_id,
+            root_package_id=root_package_id,
+            recipe_parameters=recipe_parameters,
+            completed_artifacts=completed_artifacts,
+            assumptions=assumptions,
+        )
+    )
+
+
+@mcp.tool()
+async def cameo_validate_methodology_recipe(
+    pack_id: str,
+    recipe_id: str,
+    recipe_parameters: Optional[dict] = None,
+    current_artifacts: Optional[list[dict]] = None,
+) -> dict[str, Any]:
+    """Run methodology conformance checks for an artifact recipe.
+
+    Args:
+        pack_id: Pack identifier such as `"oosem"`.
+        recipe_id: Recipe identifier from the selected pack.
+        recipe_parameters: Optional recipe parameter values used to resolve
+            expected names and artifact structure.
+        current_artifacts: Normalized artifact snapshots to validate.
+
+    Returns:
+        JSON with workflow guidance and conformance findings.
+    """
+    return _mcp_result(
+        await validate_methodology_recipe(
+            pack_id=pack_id,
+            recipe_id=recipe_id,
+            recipe_parameters=recipe_parameters,
+            current_artifacts=current_artifacts,
+        )
+    )
+
+
+@mcp.tool()
+async def cameo_generate_review_packet(
+    pack_id: str,
+    recipe_id: str,
+    recipe_parameters: Optional[dict] = None,
+    current_artifacts: Optional[list[dict]] = None,
+    assumptions: Optional[list[str]] = None,
+    notes: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Generate a compact methodology review packet without mutating the model.
+
+    Args:
+        pack_id: Pack identifier such as `"oosem"`.
+        recipe_id: Recipe identifier from the selected pack.
+        recipe_parameters: Optional recipe parameter values used to resolve
+            expected names and artifact structure.
+        current_artifacts: Normalized artifact snapshots to include.
+        assumptions: Optional assumptions to include in the packet.
+        notes: Optional freeform notes to include in the packet.
+
+    Returns:
+        JSON with a structured evidence bundle plus Markdown review packet text.
+    """
+    return _mcp_result(
+        await generate_review_packet(
+            pack_id=pack_id,
+            recipe_id=recipe_id,
+            recipe_parameters=recipe_parameters,
+            current_artifacts=current_artifacts,
+            assumptions=assumptions,
+            notes=notes,
+        )
+    )
 
 
 @mcp.tool()
@@ -102,6 +286,9 @@ async def cameo_query_elements(
     package_name: Optional[str] = None,
     stereotype: Optional[str] = None,
     recursive: bool = True,
+    limit: int = 200,
+    offset: int = 0,
+    view: str = "compact",
 ) -> dict[str, Any]:
     """Search for model elements matching filters.
 
@@ -119,10 +306,13 @@ async def cameo_query_elements(
                     "requirement", "interfaceBlock").
         recursive: Whether to search recursively into sub-packages.
                    Defaults to True.
+        limit: Maximum number of matches to return. Defaults to 200.
+        offset: Zero-based offset into the ordered result set. Defaults to 0.
+        view: Response shape: "compact" (default) or "full".
 
     Returns:
-        JSON array of matching elements with their IDs, names, types,
-        and stereotypes.
+        JSON object with paginated matches, applied filters, and cursor-like
+        paging metadata.
     """
     result = await client.query_elements(
         type=type,
@@ -130,6 +320,9 @@ async def cameo_query_elements(
         package=package_name,
         stereotype=stereotype,
         recursive=recursive,
+        limit=limit,
+        offset=offset,
+        view=view,
     )
     return _mcp_result(result)
 
@@ -155,6 +348,7 @@ async def cameo_get_element(element_id: str) -> dict[str, Any]:
 async def cameo_get_containment_tree(
     root_id: Optional[str] = None,
     depth: int = 3,
+    view: str = "compact",
 ) -> dict[str, Any]:
     """Browse the containment tree structure.
 
@@ -165,6 +359,7 @@ async def cameo_get_containment_tree(
         root_id: Element ID to use as root. Omit to start from the
                  project model root.
         depth: How many levels deep to traverse. Defaults to 3.
+        view: Response shape: "compact" (default) or "full".
 
     For large models, prefer `cameo_list_containment_children`; this recursive
     endpoint can still produce very large payloads.
@@ -172,7 +367,11 @@ async def cameo_get_containment_tree(
     Returns:
         JSON tree structure with element IDs, names, types, and children.
     """
-    result = await client.get_containment_tree(root_id=root_id, depth=depth)
+    result = await client.get_containment_tree(
+        root_id=root_id,
+        depth=depth,
+        view=view,
+    )
     return _mcp_result(result)
 
 
@@ -181,6 +380,10 @@ async def cameo_list_containment_children(
     root_id: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    type: Optional[str] = None,
+    name: Optional[str] = None,
+    stereotype: Optional[str] = None,
+    view: str = "compact",
 ) -> dict[str, Any]:
     """List a compact, paginated slice of the containment tree.
 
@@ -193,6 +396,10 @@ async def cameo_list_containment_children(
                  primary model.
         limit: Maximum number of immediate children to return. Defaults to 50.
         offset: Zero-based offset into the child list. Defaults to 0.
+        type: Optional type filter on immediate children.
+        name: Optional case-insensitive substring filter on immediate children.
+        stereotype: Optional applied stereotype filter on immediate children.
+        view: Response shape: "compact" (default) or "full".
 
     Returns:
         JSON-compatible object with the selected root, compact children, and
@@ -202,6 +409,10 @@ async def cameo_list_containment_children(
         root_id=root_id,
         limit=limit,
         offset=offset,
+        type=type,
+        name=name,
+        stereotype=stereotype,
+        view=view,
     )
     return _mcp_result(result)
 
@@ -633,6 +844,19 @@ async def cameo_list_diagram_shapes(diagram_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def cameo_get_shape_properties(
+    diagram_id: str,
+    presentation_id: str,
+) -> dict[str, Any]:
+    """Read the current property state for a specific diagram shape."""
+    result = await client.get_shape_properties(
+        diagram_id=diagram_id,
+        presentation_id=presentation_id,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
 async def cameo_move_shapes(
     diagram_id: str,
     shapes: list[dict],
@@ -803,6 +1027,47 @@ async def cameo_set_shape_properties(
     return _mcp_result(result)
 
 
+@mcp.tool()
+async def cameo_set_shape_compartments(
+    diagram_id: str,
+    presentation_id: str,
+    compartments: dict,
+) -> dict[str, Any]:
+    """Apply normalized compartment visibility controls to one diagram shape."""
+    result = await client.set_shape_compartments(
+        diagram_id=diagram_id,
+        presentation_id=presentation_id,
+        compartments=compartments,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_reparent_shapes(
+    diagram_id: str,
+    reparentings: list[dict],
+) -> dict[str, Any]:
+    """Move existing presentation elements under new container shapes."""
+    result = await client.reparent_shapes(
+        diagram_id=diagram_id,
+        reparentings=reparentings,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_route_paths(
+    diagram_id: str,
+    routes: list[dict],
+) -> dict[str, Any]:
+    """Update routing and label reset behavior for existing diagram paths."""
+    result = await client.route_paths(
+        diagram_id=diagram_id,
+        routes=routes,
+    )
+    return _mcp_result(result)
+
+
 # -- Specification -----------------------------------------------------------
 
 
@@ -872,6 +1137,21 @@ async def cameo_set_specification(
     """
     result = await client.set_specification(
         element_id, properties=properties, constraints=constraints
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_set_usecase_subject(
+    element_id: str,
+    subject_ids: list[str],
+    append: bool = False,
+) -> dict[str, Any]:
+    """Set or append subject classifiers on a UseCase."""
+    result = await client.set_usecase_subject(
+        element_id=element_id,
+        subject_ids=subject_ids,
+        append=append,
     )
     return _mcp_result(result)
 
