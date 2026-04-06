@@ -5,6 +5,7 @@ import com.claude.cameo.bridge.handlers.DiagramHandler;
 import com.claude.cameo.bridge.handlers.ElementMutationHandler;
 import com.claude.cameo.bridge.handlers.ElementQueryHandler;
 import com.claude.cameo.bridge.handlers.MacroHandler;
+import com.claude.cameo.bridge.handlers.MatrixHandler;
 import com.claude.cameo.bridge.handlers.ProjectHandler;
 import com.claude.cameo.bridge.handlers.RelationshipHandler;
 import com.claude.cameo.bridge.handlers.SpecificationHandler;
@@ -61,6 +62,7 @@ public class HttpBridgeServer {
 
         server.createContext("/api/v1/relationships", new RelationshipHandler());
         server.createContext("/api/v1/diagrams", new DiagramHandler());
+        server.createContext("/api/v1/matrices", new MatrixHandler());
         server.createContext("/api/v1/macros", new MacroHandler());
         server.createContext("/api/v1/session/reset", this::handleSessionReset);
     }

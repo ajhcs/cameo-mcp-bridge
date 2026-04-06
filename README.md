@@ -2,7 +2,7 @@
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
 
-This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 37 tools covering capability negotiation, methodology-aware OOSEM workflows, elements, relationships, diagrams, specifications, and Groovy macro execution.
+This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 40 tools covering capability negotiation, methodology-aware OOSEM workflows, elements, relationships, native requirement matrices, diagrams, specifications, and Groovy macro execution.
 
 ```
 Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (Cameo JVM)
@@ -47,6 +47,7 @@ This is the only open-source MCP server that integrates directly with a running 
                                                                |  - ElementQueryHandler  |
                                                                |  - ElementMutationHandler|
                                                                |  - RelationshipHandler  |
+                                                               |  - MatrixHandler        |
                                                                |  - DiagramHandler       |
                                                                |  - ContainmentTreeHandler|
                                                                |  - SpecificationHandler |
@@ -244,7 +245,23 @@ If you create a custom profile through MCP, the typical sequence is:
 
 **Supported relationship types:** Association, DirectedAssociation, Composition, Generalization, Dependency, ControlFlow, ObjectFlow, Transition, Connector, Allocate, Satisfy, Derive, Refine, Trace, Verify, Include, Extend
 
-### Diagrams (10 tools)
+### Matrices (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `cameo_list_matrices` | List supported native requirement matrices in the project |
+| `cameo_get_matrix` | Read one native refine/derive matrix with rows, columns, and populated cells |
+| `cameo_create_matrix` | Create a native refine or derive requirement matrix artifact |
+
+**Supported matrix kinds:** `refine`, `derive`
+
+These tools target Cameo's native matrix artifacts:
+- `refine` -> `Refine Requirement Matrix`
+- `derive` -> `Derive Requirement Matrix`
+
+This matrix family is separate from the diagram shape/path API. It manages native requirement-matrix artifacts and returns row/column/cell data directly.
+
+### Diagrams (14 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -254,10 +271,14 @@ If you create a custom profile through MCP, the typical sequence is:
 | `cameo_get_diagram_image` | Export a diagram as base64-encoded PNG |
 | `cameo_auto_layout` | Apply Cameo's built-in auto-layout |
 | `cameo_list_diagram_shapes` | List all shapes/paths with presentation IDs, bounds, and counts |
+| `cameo_get_shape_properties` | Read the current display properties of one diagram shape |
 | `cameo_move_shapes` | Reposition/resize shapes on a diagram with per-item results |
 | `cameo_delete_shapes` | Remove shapes from a diagram (model elements preserved) |
 | `cameo_add_diagram_paths` | Draw relationship paths between shapes on a diagram |
 | `cameo_set_shape_properties` | Set display properties (colors, compartment visibility, etc.) with receipts |
+| `cameo_set_shape_compartments` | Apply normalized compartment visibility controls to one shape |
+| `cameo_reparent_shapes` | Move existing presentation elements under new container shapes |
+| `cameo_route_paths` | Update path breakpoints, endpoints, and label reset behavior |
 
 **Supported diagram types:** Class, Package, UseCase, Activity, Sequence, StateMachine, Component, Deployment, CompositeStructure, Object, Communication, InteractionOverview, Timing, Profile, SysML BDD, SysML IBD, SysML Requirement, SysML Parametric
 
@@ -358,6 +379,7 @@ The bridge builds models correctly -- elements, relationships, directionality, s
 **Current direction:** Keep expanding structured editing for nested presentation elements so fewer workflows require macros.
 
 ### Not Yet Implemented
+- **Generic matrix/table artifact handler** -- native matrix support currently covers refine/derive requirement matrices only
 - **Remove stereotype** -- can apply but not remove
 - **Delete/rename diagrams** -- diagrams can be created and populated but not deleted or renamed through the bridge
 - **Element reparenting** -- cannot move elements between packages
@@ -397,7 +419,7 @@ cameo-mcp-bridge/
     cameo_mcp/
       __init__.py
       client.py                        # HTTP client for the Java plugin
-      server.py                        # MCP tool definitions (37 tools)
+      server.py                        # MCP tool definitions (40 tools)
       methodology/                     # Phase 2 pack registry + recipe runtime
         registry.py
         runtime.py
@@ -412,6 +434,7 @@ cameo-mcp-bridge/
         ElementQueryHandler.java       # Element search, get, relationships
         ElementMutationHandler.java    # Create, modify, delete elements
         RelationshipHandler.java       # Create relationships
+        MatrixHandler.java             # Native refine/derive requirement matrices
         DiagramHandler.java            # Full diagram lifecycle
         ContainmentTreeHandler.java    # Containment tree browsing
         SpecificationHandler.java      # Specification read/write

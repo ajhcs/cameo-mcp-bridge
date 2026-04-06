@@ -353,23 +353,29 @@ public class RelationshipHandler implements HttpHandler {
         }
 
         Connector connector = ef.createConnectorInstance();
-        connector.set_structuredClassifierOfOwnedConnector((StructuredClassifier) owner);
+        StructuredClassifier structuredOwner = (StructuredClassifier) owner;
+        structuredOwner.getOwnedConnector().add(connector);
 
-        ConnectorEnd sourceEnd = ef.createConnectorEndInstance();
+        List<ConnectorEnd> ends = connector.getEnd();
+        ConnectorEnd sourceEnd = ends.size() > 0 ? ends.get(0) : ef.createConnectorEndInstance();
+        if (ends.isEmpty()) {
+            ends.add(sourceEnd);
+        }
         sourceEnd.setRole((ConnectableElement) source);
         Property sourcePartWithPort = resolvePartWithPort(project, sourcePartWithPortId);
         if (sourcePartWithPort != null) {
             sourceEnd.setPartWithPort(sourcePartWithPort);
         }
-        sourceEnd.set_connectorOfEnd(connector);
 
-        ConnectorEnd targetEnd = ef.createConnectorEndInstance();
+        ConnectorEnd targetEnd = ends.size() > 1 ? ends.get(1) : ef.createConnectorEndInstance();
+        if (ends.size() < 2) {
+            ends.add(targetEnd);
+        }
         targetEnd.setRole((ConnectableElement) target);
         Property targetPartWithPort = resolvePartWithPort(project, targetPartWithPortId);
         if (targetPartWithPort != null) {
             targetEnd.setPartWithPort(targetPartWithPort);
         }
-        targetEnd.set_connectorOfEnd(connector);
 
         return connector;
     }

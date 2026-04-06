@@ -214,3 +214,53 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             },
             request.await_args.kwargs["json_body"],
         )
+
+    async def test_list_matrices_passes_filters(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"count": 0})) as request:
+            await client.list_matrices(
+                kind="refine",
+                owner_id="pkg-1",
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("GET", request.await_args.args[0])
+        self.assertEqual("/matrices", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "kind": "refine",
+                "ownerId": "pkg-1",
+            },
+            request.await_args.kwargs["params"],
+        )
+
+    async def test_get_matrix_uses_matrix_endpoint(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"id": "matrix-1"})) as request:
+            await client.get_matrix("matrix-1")
+
+        request.assert_awaited_once_with("GET", "/matrices/matrix-1")
+
+    async def test_create_matrix_includes_scopes(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_matrix(
+                kind="derive",
+                parent_id="pkg-1",
+                name="Derive Coverage",
+                scope_id="pkg-2",
+                row_scope_id="pkg-3",
+                column_scope_id="pkg-4",
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("POST", request.await_args.args[0])
+        self.assertEqual("/matrices", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "kind": "derive",
+                "parentId": "pkg-1",
+                "name": "Derive Coverage",
+                "scopeId": "pkg-2",
+                "rowScopeId": "pkg-3",
+                "columnScopeId": "pkg-4",
+            },
+            request.await_args.kwargs["json_body"],
+        )

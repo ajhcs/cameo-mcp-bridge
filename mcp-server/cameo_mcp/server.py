@@ -703,6 +703,99 @@ async def cameo_get_relationships(
     )
     return _mcp_result(result)
 
+# -- Matrices -----------------------------------------------------------------
+
+
+@mcp.tool()
+async def cameo_list_matrices(
+    kind: Optional[str] = None,
+    owner_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """List supported native requirement matrices in the current project.
+
+    This matrix family is intentionally separate from the diagram shape/path API.
+    It targets Cameo's native requirement-matrix artifacts, not arbitrary tables.
+
+    Args:
+        kind: Optional matrix kind filter. Supported values:
+              - "refine" for native Refine Requirement Matrix artifacts
+              - "derive" for native Derive Requirement Matrix artifacts
+        owner_id: Optional package/namespace ID that owns the matrix artifact.
+
+    Returns:
+        JSON with matching matrix IDs, names, native matrix types, and owners.
+    """
+    result = await client.list_matrices(
+        kind=kind,
+        owner_id=owner_id,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_matrix(matrix_id: str) -> dict[str, Any]:
+    """Read one supported native requirement matrix with populated cell data.
+
+    Supported matrix artifacts currently include:
+    - Refine Requirement Matrix
+    - Derive Requirement Matrix
+
+    The response includes row and column elements plus only the populated cells.
+    Empty cells are omitted from `populatedCells`; infer gaps from the row/column
+    cross-product.
+
+    Args:
+        matrix_id: Diagram ID of the matrix artifact.
+
+    Returns:
+        JSON with matrix metadata, scope/type settings, rows, columns, and
+        populated cells with their underlying relationship causes.
+    """
+    result = await client.get_matrix(matrix_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_create_matrix(
+    kind: str,
+    parent_id: str,
+    name: Optional[str] = None,
+    scope_id: Optional[str] = None,
+    row_scope_id: Optional[str] = None,
+    column_scope_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Create a native refine or derive requirement matrix artifact.
+
+    This creates Cameo's native matrix types:
+    - "refine" -> Refine Requirement Matrix
+    - "derive" -> Derive Requirement Matrix
+
+    The bridge configures the matrix to show all relevant rows/columns inside the
+    selected scope so missing traceability remains visible.
+
+    Args:
+        kind: Matrix kind: "refine" or "derive".
+        parent_id: Namespace/package ID that will own the matrix artifact.
+        name: Optional display name. Defaults to Cameo's native matrix type name.
+        scope_id: Optional shared scope root for both rows and columns. Defaults
+                  to parent_id when row_scope_id/column_scope_id are omitted.
+        row_scope_id: Optional explicit row scope root.
+        column_scope_id: Optional explicit column scope root.
+
+    Returns:
+        JSON confirmation with the created matrix artifact and its initial
+        populated row/column/cell data.
+    """
+    result = await client.create_matrix(
+        kind=kind,
+        parent_id=parent_id,
+        name=name,
+        scope_id=scope_id,
+        row_scope_id=row_scope_id,
+        column_scope_id=column_scope_id,
+    )
+    return _mcp_result(result)
+
 # -- Diagrams -----------------------------------------------------------------
 
 

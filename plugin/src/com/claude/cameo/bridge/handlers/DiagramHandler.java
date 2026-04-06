@@ -457,7 +457,7 @@ public class DiagramHandler implements HttpHandler {
                     entry.addProperty("id", property.getID());
                 }
                 if (property.getClassType() != null) {
-                    entry.addProperty("classType", property.getClassType().getSimpleName());
+                    entry.addProperty("classType", property.getClassType());
                 }
                 addJsonValue(entry, "value", property.getValue());
                 propertiesArray.add(entry);

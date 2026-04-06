@@ -353,6 +353,50 @@ async def create_relationship(
         body["targetPartWithPortId"] = target_part_with_port_id
     return await _request("POST", "/relationships", json_body=body)
 
+# -- Matrices -----------------------------------------------------------------
+
+
+async def list_matrices(
+    kind: Optional[str] = None,
+    owner_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """List supported native requirement matrices in the current project."""
+    params: dict[str, Any] = {}
+    if kind is not None:
+        params["kind"] = kind
+    if owner_id is not None:
+        params["ownerId"] = owner_id
+    return await _request("GET", "/matrices", params=params)
+
+
+async def get_matrix(matrix_id: str) -> dict[str, Any]:
+    """Get one supported native requirement matrix with populated cell data."""
+    return await _request("GET", f"/matrices/{matrix_id}")
+
+
+async def create_matrix(
+    kind: str,
+    parent_id: str,
+    name: Optional[str] = None,
+    scope_id: Optional[str] = None,
+    row_scope_id: Optional[str] = None,
+    column_scope_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Create a native refine/derive requirement matrix."""
+    body: dict[str, Any] = {
+        "kind": kind,
+        "parentId": parent_id,
+    }
+    if name is not None:
+        body["name"] = name
+    if scope_id is not None:
+        body["scopeId"] = scope_id
+    if row_scope_id is not None:
+        body["rowScopeId"] = row_scope_id
+    if column_scope_id is not None:
+        body["columnScopeId"] = column_scope_id
+    return await _request("POST", "/matrices", json_body=body)
+
 # -- Diagrams -----------------------------------------------------------------
 
 
