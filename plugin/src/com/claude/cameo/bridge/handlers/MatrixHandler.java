@@ -15,13 +15,13 @@ import com.nomagic.magicdraw.dependencymatrix.datamodel.cell.DependencyEntry;
 import com.nomagic.magicdraw.dependencymatrix.persistence.FilterSettings;
 import com.nomagic.magicdraw.dependencymatrix.persistence.MatrixSettings;
 import com.nomagic.magicdraw.dependencymatrix.persistence.PersistenceManager;
+import com.nomagic.magicdraw.uml.ClassTypes;
 import com.nomagic.magicdraw.uml.symbols.DiagramPresentationElement;
 import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Diagram;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Namespace;
-import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -38,7 +38,6 @@ public class MatrixHandler implements HttpHandler {
 
     private static final Logger LOG = Logger.getLogger(MatrixHandler.class.getName());
     private static final String PREFIX = "/api/v1/matrices/";
-    private static final String SYSML_PROFILE = "SysML";
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -152,7 +151,15 @@ public class MatrixHandler implements HttpHandler {
         String scopeId = JsonHelper.optionalString(body, "scopeId");
         String rowScopeId = JsonHelper.optionalString(body, "rowScopeId");
         String columnScopeId = JsonHelper.optionalString(body, "columnScopeId");
+        List<String> rowTypes = JsonHelper.optionalStringList(body, "rowTypes");
+        List<String> columnTypes = JsonHelper.optionalStringList(body, "columnTypes");
         String name = JsonHelper.optionalString(body, "name");
+        if (rowTypes != null && rowTypes.isEmpty()) {
+            throw new IllegalArgumentException("rowTypes must not be empty when provided");
+        }
+        if (columnTypes != null && columnTypes.isEmpty()) {
+            throw new IllegalArgumentException("columnTypes must not be empty when provided");
+        }
 
         JsonObject result = EdtDispatcher.write("MCP Bridge: Create " + kind.diagramType, project -> {
             Element parentElement = resolveElement(project, parentId, "Parent element");
@@ -175,7 +182,7 @@ public class MatrixHandler implements HttpHandler {
                 diagram.setName(name);
             }
 
-            configureMatrix(project, diagram, kind, rowScope, columnScope);
+            configureMatrix(project, diagram, kind, rowScope, columnScope, rowTypes, columnTypes);
 
             JsonObject response = new JsonObject();
             response.addProperty("created", true);
@@ -198,7 +205,9 @@ public class MatrixHandler implements HttpHandler {
             Diagram diagram,
             MatrixKind kind,
             Element rowScope,
-            Element columnScope) {
+            Element columnScope,
+            List<String> requestedRowTypes,
+            List<String> requestedColumnTypes) {
         PersistenceManager persistenceManager = new PersistenceManager(diagram);
         MatrixSettings settings = persistenceManager.getMatrixSettings();
         settings.setDirection(MatrixSettings.Direction.ROW_TO_COLUMN);
@@ -211,13 +220,19 @@ public class MatrixHandler implements HttpHandler {
         rowSettings.setScopeDefined(true);
         rowSettings.setTypesIncludeSubtypes(true);
         rowSettings.setTypesIncludeCustomTypes(true);
-        rowSettings.setConvertedElementTypes(kind.resolveRowTypes(project));
+        rowSettings.setConvertedElementTypes(resolveTypes(
+                project,
+                requestedRowTypes,
+                kind.defaultRowTypes));
 
         columnSettings.setScope(List.of(columnScope));
         columnSettings.setScopeDefined(true);
         columnSettings.setTypesIncludeSubtypes(true);
         columnSettings.setTypesIncludeCustomTypes(true);
-        columnSettings.setConvertedElementTypes(kind.resolveColumnTypes(project));
+        columnSettings.setConvertedElementTypes(resolveTypes(
+                project,
+                requestedColumnTypes,
+                kind.defaultColumnTypes));
     }
 
     private JsonObject serializeMatrix(com.nomagic.magicdraw.core.Project project, String matrixId) {
@@ -373,6 +388,96 @@ public class MatrixHandler implements HttpHandler {
         return dpe.getDiagramType() != null ? dpe.getDiagramType().getType() : "";
     }
 
+    private List<Object> resolveTypes(
+            com.nomagic.magicdraw.core.Project project,
+            List<String> requestedTypes,
+            List<String> defaultTypes) {
+        List<String> effectiveTypes =
+                requestedTypes != null && !requestedTypes.isEmpty() ? requestedTypes : defaultTypes;
+        List<Object> resolved = new ArrayList<>(effectiveTypes.size());
+        for (String typeName : effectiveTypes) {
+            resolved.add(resolveTypeReference(project, typeName));
+        }
+        return resolved;
+    }
+
+    private Object resolveTypeReference(
+            com.nomagic.magicdraw.core.Project project,
+            String typeName) {
+        if (typeName == null || typeName.isEmpty()) {
+            throw new IllegalArgumentException("Matrix type tokens must not be empty");
+        }
+
+        Stereotype stereotype = resolveStereotype(project, typeName);
+        if (stereotype != null) {
+            return stereotype;
+        }
+
+        com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class metaClass =
+                resolveMetaClass(project, typeName);
+        if (metaClass != null) {
+            return metaClass;
+        }
+
+        throw new IllegalArgumentException(
+                "Unknown matrix row/column type: " + typeName
+                        + ". Use a UML metaclass such as UseCase or Property, "
+                        + "or an applied stereotype such as Block, Requirement, or valueProperty.");
+    }
+
+    private Stereotype resolveStereotype(
+            com.nomagic.magicdraw.core.Project project,
+            String stereotypeName) {
+        String normalized = normalizeTypeToken(stereotypeName);
+        Collection<Stereotype> stereotypes = StereotypesHelper.getAllStereotypes(project);
+        if (stereotypes == null) {
+            return null;
+        }
+        for (Stereotype stereotype : stereotypes) {
+            if (normalized.equals(normalizeTypeToken(stereotype.getName()))) {
+                return stereotype;
+            }
+        }
+        return null;
+    }
+
+    private com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class resolveMetaClass(
+            com.nomagic.magicdraw.core.Project project,
+            String rawTypeName) {
+        String normalizedName = normalizeTypeName(rawTypeName);
+        java.lang.Class<?> metaclass = ClassTypes.getClassType(rawTypeName);
+        if (metaclass == null) {
+            metaclass = ClassTypes.getClassType(normalizedName);
+        }
+        if (metaclass == null) {
+            return null;
+        }
+        String shortName = ClassTypes.getShortName(metaclass);
+        if (shortName == null || shortName.isEmpty()) {
+            return null;
+        }
+        return StereotypesHelper.getMetaClassByName(project, shortName);
+    }
+
+    private String normalizeTypeName(String input) {
+        String[] parts = input.split("[-_ ]+");
+        StringBuilder builder = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            builder.append(Character.toUpperCase(part.charAt(0)));
+            if (part.length() > 1) {
+                builder.append(part.substring(1));
+            }
+        }
+        return builder.toString();
+    }
+
+    private String normalizeTypeToken(String input) {
+        return input == null ? "" : input.replaceAll("[^A-Za-z0-9]+", "").toLowerCase();
+    }
+
     private static final class MatrixContext {
         private final MatrixKind kind;
         private final Diagram diagram;
@@ -386,19 +491,23 @@ public class MatrixHandler implements HttpHandler {
     }
 
     private enum MatrixKind {
-        REFINE("refine", "Refine Requirement Matrix", "Block", "Requirement"),
-        DERIVE("derive", "Derive Requirement Matrix", "Requirement", "Requirement");
+        REFINE("refine", "Refine Requirement Matrix", List.of("Block"), List.of("Requirement")),
+        DERIVE("derive", "Derive Requirement Matrix", List.of("Requirement"), List.of("Requirement"));
 
         private final String apiName;
         private final String diagramType;
-        private final String rowStereotype;
-        private final String columnStereotype;
+        private final List<String> defaultRowTypes;
+        private final List<String> defaultColumnTypes;
 
-        MatrixKind(String apiName, String diagramType, String rowStereotype, String columnStereotype) {
+        MatrixKind(
+                String apiName,
+                String diagramType,
+                List<String> defaultRowTypes,
+                List<String> defaultColumnTypes) {
             this.apiName = apiName;
             this.diagramType = diagramType;
-            this.rowStereotype = rowStereotype;
-            this.columnStereotype = columnStereotype;
+            this.defaultRowTypes = defaultRowTypes;
+            this.defaultColumnTypes = defaultColumnTypes;
         }
 
         private static MatrixKind require(String rawValue) {
@@ -435,29 +544,6 @@ public class MatrixHandler implements HttpHandler {
                 }
             }
             return null;
-        }
-
-        private List<Object> resolveRowTypes(com.nomagic.magicdraw.core.Project project) {
-            return List.of(resolveRequiredStereotype(project, rowStereotype));
-        }
-
-        private List<Object> resolveColumnTypes(com.nomagic.magicdraw.core.Project project) {
-            return List.of(resolveRequiredStereotype(project, columnStereotype));
-        }
-
-        private Stereotype resolveRequiredStereotype(
-                com.nomagic.magicdraw.core.Project project,
-                String stereotypeName) {
-            Profile profile = StereotypesHelper.getProfile(project, SYSML_PROFILE);
-            if (profile == null) {
-                throw new IllegalStateException("SysML profile is not available in the open project");
-            }
-            Stereotype stereotype = StereotypesHelper.getStereotype(project, stereotypeName, profile);
-            if (stereotype == null) {
-                throw new IllegalStateException(
-                        "Required SysML stereotype is not available: " + stereotypeName);
-            }
-            return stereotype;
         }
     }
 }

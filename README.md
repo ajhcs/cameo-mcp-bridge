@@ -2,7 +2,7 @@
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
 
-This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 40 tools covering capability negotiation, methodology-aware OOSEM workflows, elements, relationships, native requirement matrices, diagrams, specifications, and Groovy macro execution.
+This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 49 tools covering capability negotiation, methodology-aware OOSEM workflows, elements, relationships, native requirement matrices, diagrams, reusable verification, specifications, and Groovy macro execution.
 
 ```
 Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (Cameo JVM)
@@ -215,9 +215,9 @@ And set `CAMEO_BRIDGE_PORT=18741` in your environment before launching Claude Co
 | `cameo_list_containment_children` | Page/filter immediate children for large models with compact/full views |
 | `cameo_apply_profile` | Apply a profile to a model/package so custom stereotypes become usable |
 
-**Supported element types:** Package, Profile, Stereotype, Class, Block, Property, Port, Interface, Activity, UseCase, Actor, StateMachine, State, Pseudostate, InitialState, Requirement, InterfaceBlock, ConstraintBlock, ValueType, DataType, Signal, Enumeration, Component, Comment, Constraint, CallBehaviorAction, OpaqueAction, ActivityPartition, InitialNode, ActivityFinalNode, FlowFinalNode, DecisionNode, MergeNode, ForkNode, JoinNode, InputPin, OutputPin, Operation
+**Supported element types:** Package, Profile, Stereotype, Class, Block, Property, FlowProperty, Port, Interface, Activity, UseCase, Actor, StateMachine, State, Pseudostate, InitialState, Requirement, InterfaceBlock, ConstraintBlock, ValueType, DataType, Signal, Enumeration, Component, Comment, Constraint, CallBehaviorAction, OpaqueAction, ActivityPartition, InitialNode, ActivityFinalNode, FlowFinalNode, DecisionNode, MergeNode, ForkNode, JoinNode, InputPin, OutputPin, Operation
 
-SysML aliases such as `Block`, `Requirement`, `ConstraintBlock`, `InterfaceBlock`, and `ValueType` rely on the SysML profile being available. The bridge now treats missing required stereotypes as an error instead of silently producing plain UML elements.
+SysML aliases such as `Block`, `Requirement`, `ConstraintBlock`, `InterfaceBlock`, `ValueType`, and `FlowProperty` rely on the SysML profile being available. The bridge now treats missing required stereotypes as an error instead of silently producing plain UML elements.
 `Pseudostate` currently maps to an initial pseudostate in the MVP.
 
 For large projects, prefer `cameo_list_containment_children` over `cameo_get_containment_tree`. The recursive tree endpoint is still available for compatibility, but it can produce very large responses on real models.
@@ -243,12 +243,15 @@ If you create a custom profile through MCP, the typical sequence is:
 | `cameo_create_relationship` | Create a relationship between two elements |
 | `cameo_get_relationships` | Query relationships for an element |
 
-**Supported relationship types:** Association, DirectedAssociation, Composition, Generalization, Dependency, ControlFlow, ObjectFlow, Transition, Connector, Allocate, Satisfy, Derive, Refine, Trace, Verify, Include, Extend
+**Supported relationship types:** Association, DirectedAssociation, Composition, Generalization, Dependency, ControlFlow, ObjectFlow, Transition, Connector, InformationFlow, ItemFlow, Allocate, Satisfy, Derive, Refine, Trace, Verify, Include, Extend
 
-### Matrices (3 tools)
+`Connector` supports nested-port `partWithPort` ownership. `InformationFlow` and `ItemFlow` support structured `realizingConnector`, `conveyed`, and SysML `itemProperty` payload data for IBD item-flow workflows. When you pass an IBD context element as `ownerId`, the bridge resolves the actual `InformationFlow`/`ItemFlow` containment to the nearest package because Cameo does not allow those relationships to be owned directly by a block.
+
+### Matrices (4 tools)
 
 | Tool | Description |
 |------|-------------|
+| `cameo_list_matrix_kinds` | List validated native matrix kinds, aliases, and example type domains |
 | `cameo_list_matrices` | List supported native requirement matrices in the project |
 | `cameo_get_matrix` | Read one native refine/derive matrix with rows, columns, and populated cells |
 | `cameo_create_matrix` | Create a native refine or derive requirement matrix artifact |
@@ -261,10 +264,13 @@ These tools target Cameo's native matrix artifacts:
 
 This matrix family is separate from the diagram shape/path API. It manages native requirement-matrix artifacts and returns row/column/cell data directly.
 
-### Diagrams (14 tools)
+`cameo_create_matrix` also accepts optional `row_types` and `column_types` lists so native refine matrices can target mission artifacts such as `UseCase`, `Property`, or SysML stereotypes instead of being fixed to `Block`. Use `cameo_list_matrix_kinds` to see the validated kind aliases and example type domains.
+
+### Diagrams (15 tools)
 
 | Tool | Description |
 |------|-------------|
+| `cameo_list_diagram_types` | List validated diagram request tokens, aliases, and native Cameo types |
 | `cameo_list_diagrams` | List all diagrams in the project |
 | `cameo_create_diagram` | Create a new diagram (18 types supported) |
 | `cameo_add_to_diagram` | Place a model element on a diagram canvas and return its `presentationId` |
@@ -280,14 +286,26 @@ This matrix family is separate from the diagram shape/path API. It manages nativ
 | `cameo_reparent_shapes` | Move existing presentation elements under new container shapes |
 | `cameo_route_paths` | Update path breakpoints, endpoints, and label reset behavior |
 
-**Supported diagram types:** Class, Package, UseCase, Activity, Sequence, StateMachine, Component, Deployment, CompositeStructure, Object, Communication, InteractionOverview, Timing, Profile, SysML BDD, SysML IBD, SysML Requirement, SysML Parametric
+**Validated diagram request tokens:** `Class`, `Package`, `UseCase`, `Activity`, `Sequence`, `StateMachine`, `Component`, `Deployment`, `CompositeStructure`, `Object`, `Communication`, `InteractionOverview`, `Timing`, `Profile`, `BDD`, `IBD`, `Requirement Diagram`, `Parametric Diagram`
 
-### Specification (2 tools)
+Use `cameo_list_diagram_types` if you want the accepted aliases too. Common forms such as `InternalBlockDiagram`, `SysML IBD`, `ClassDiagram`, and `StateMachineDiagram` are normalized to the validated token set automatically.
+
+### Verification (2 tools)
+
+| Tool | Description |
+|------|-------------|
+| `cameo_verify_matrix_consistency` | Check matrix row/column membership, populated-cell count, dependency names, and density |
+| `cameo_verify_diagram_visual` | Check rendered PNG validity, diagram/path presence, content coverage, and coarse overlap risk |
+
+These verification tools are Python-side wrappers over the bridge's native diagram and matrix readback. They are intended for repeatable regression checks, visual sanity validation, and lightweight quantitative validation without dropping to raw macros.
+
+### Specification (3 tools)
 
 | Tool | Description |
 |------|-------------|
 | `cameo_get_specification` | Read all UML properties, tagged values, and constraints |
 | `cameo_set_specification` | Write properties, tagged values, or constraint fields |
+| `cameo_set_usecase_subject` | Set or clear the UML subject classifier for a use case |
 
 ### Macros (1 tool)
 
@@ -419,7 +437,8 @@ cameo-mcp-bridge/
     cameo_mcp/
       __init__.py
       client.py                        # HTTP client for the Java plugin
-      server.py                        # MCP tool definitions (40 tools)
+      server.py                        # MCP tool definitions (49 tools)
+      verification.py                  # reusable diagram/matrix verification helpers
       methodology/                     # Phase 2 pack registry + recipe runtime
         registry.py
         runtime.py

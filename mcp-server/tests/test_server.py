@@ -4,7 +4,11 @@ from unittest.mock import AsyncMock, patch
 from cameo_mcp.server import (
     _mcp_result,
     cameo_get_capabilities,
+    cameo_list_diagram_types,
+    cameo_list_matrix_kinds,
     cameo_list_methodology_packs,
+    cameo_verify_diagram_visual,
+    cameo_verify_matrix_consistency,
 )
 
 
@@ -41,6 +45,97 @@ class ServerToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result, payload)
         list_packs.assert_called_once_with()
+
+    async def test_cameo_list_diagram_types_returns_validated_metadata(self) -> None:
+        result = await cameo_list_diagram_types()
+
+        self.assertEqual(len(result["diagramTypes"]), result["count"])
+        self.assertGreater(result["count"], 0)
+
+    async def test_cameo_list_matrix_kinds_returns_validated_metadata(self) -> None:
+        result = await cameo_list_matrix_kinds()
+
+        self.assertEqual(len(result["matrixKinds"]), result["count"])
+        self.assertGreater(result["count"], 0)
+
+    async def test_cameo_verify_diagram_visual_wraps_client_and_helper(self) -> None:
+        diagram_image = {"image": "abc", "width": 100, "height": 50}
+        diagram_shapes = {"shapeCount": 2, "shapes": []}
+        payload = {"ok": True, "checks": []}
+
+        with patch(
+            "cameo_mcp.server.client.get_diagram_image",
+            new=AsyncMock(return_value=diagram_image),
+        ) as get_diagram_image, patch(
+            "cameo_mcp.server.client.list_diagram_shapes",
+            new=AsyncMock(return_value=diagram_shapes),
+        ) as list_diagram_shapes, patch(
+            "cameo_mcp.server.verification.verify_diagram_visual",
+            return_value=payload.copy(),
+        ) as verify_diagram_visual:
+            result = await cameo_verify_diagram_visual(
+                "dia-1",
+                expected_element_ids=["el-1"],
+                expected_relationship_ids=["rel-1"],
+                min_shape_count=2,
+                min_relationship_shape_count=1,
+                min_width=100,
+                min_height=50,
+                min_image_bytes=128,
+                min_content_coverage_ratio=0.05,
+                max_overlap_ratio=0.2,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertIs(result["diagramImage"], diagram_image)
+        self.assertIs(result["diagramShapes"], diagram_shapes)
+        get_diagram_image.assert_awaited_once_with("dia-1")
+        list_diagram_shapes.assert_awaited_once_with("dia-1")
+        verify_diagram_visual.assert_called_once_with(
+            diagram_image,
+            diagram_shapes,
+            expected_element_ids=["el-1"],
+            expected_relationship_ids=["rel-1"],
+            min_shape_count=2,
+            min_relationship_shape_count=1,
+            min_width=100,
+            min_height=50,
+            min_image_bytes=128,
+            min_content_coverage_ratio=0.05,
+            max_overlap_ratio=0.2,
+        )
+
+    async def test_cameo_verify_matrix_consistency_wraps_client_and_helper(self) -> None:
+        matrix = {"id": "matrix-1", "rows": [], "columns": [], "populatedCells": []}
+        payload = {"ok": True, "checks": []}
+
+        with patch(
+            "cameo_mcp.server.client.get_matrix",
+            new=AsyncMock(return_value=matrix),
+        ) as get_matrix, patch(
+            "cameo_mcp.server.verification.verify_matrix_consistency",
+            return_value=payload.copy(),
+        ) as verify_matrix_consistency:
+            result = await cameo_verify_matrix_consistency(
+                "matrix-1",
+                expected_row_ids=["row-1"],
+                expected_column_ids=["col-1"],
+                expected_dependency_names=["Refine"],
+                min_populated_cell_count=1,
+                min_density=0.25,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertIs(result["matrix"], matrix)
+        get_matrix.assert_awaited_once_with("matrix-1")
+        verify_matrix_consistency.assert_called_once_with(
+            matrix,
+            expected_row_ids=["row-1"],
+            expected_column_ids=["col-1"],
+            expected_dependency_names=["Refine"],
+            min_populated_cell_count=1,
+            min_density=0.25,
+        )
 
 
 if __name__ == "__main__":

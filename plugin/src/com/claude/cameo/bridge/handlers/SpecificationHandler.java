@@ -331,6 +331,41 @@ public class SpecificationHandler implements HttpHandler {
         }
     }
 
+    private JsonElement serializeTaggedValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean) {
+            return new JsonPrimitive((Boolean) value);
+        }
+        if (value instanceof Number) {
+            return new JsonPrimitive((Number) value);
+        }
+        if (value instanceof String) {
+            return new JsonPrimitive((String) value);
+        }
+        if (value instanceof Character) {
+            return new JsonPrimitive((Character) value);
+        }
+        if (value instanceof VisibilityKind) {
+            return new JsonPrimitive(value.toString());
+        }
+        if (value instanceof Element) {
+            return ElementSerializer.toJsonCompact((Element) value);
+        }
+        if (value instanceof Collection<?>) {
+            JsonArray arr = new JsonArray();
+            for (Object item : (Collection<?>) value) {
+                JsonElement serialized = serializeTaggedValue(item);
+                if (serialized != null) {
+                    arr.add(serialized);
+                }
+            }
+            return arr;
+        }
+        return new JsonPrimitive(String.valueOf(value));
+    }
+
     private String readDocumentation(Element element) {
         try {
             Collection<Comment> comments = element.getOwnedComment();
@@ -403,14 +438,15 @@ public class SpecificationHandler implements HttpHandler {
                                             element, stereo, tagName);
                             if (values != null && !values.isEmpty()) {
                                 if (values.size() == 1) {
-                                    taggedValues.addProperty(tagName,
-                                            String.valueOf(values.get(0)));
-                                } else {
-                                    JsonArray arr = new JsonArray();
-                                    for (Object v : values) {
-                                        arr.add(String.valueOf(v));
+                                    JsonElement serialized = serializeTaggedValue(values.get(0));
+                                    if (serialized != null) {
+                                        taggedValues.add(tagName, serialized);
                                     }
-                                    taggedValues.add(tagName, arr);
+                                } else {
+                                    JsonElement serialized = serializeTaggedValue(values);
+                                    if (serialized != null) {
+                                        taggedValues.add(tagName, serialized);
+                                    }
                                 }
                             }
                         } catch (Exception e) {

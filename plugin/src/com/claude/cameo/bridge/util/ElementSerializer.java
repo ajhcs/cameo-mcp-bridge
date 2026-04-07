@@ -2,13 +2,18 @@ package com.claude.cameo.bridge.util;
 
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.Connector;
+import com.nomagic.uml2.ext.magicdraw.auxiliaryconstructs.mdinformationflows.InformationFlow;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
 import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
 import com.nomagic.magicdraw.uml.ClassTypes;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import java.util.Collection;
 import java.util.List;
 import java.util.logging.Level;
@@ -36,7 +41,7 @@ public class ElementSerializer {
      *   <li>{@code ownerId} - the ID of the owning element</li>
      *   <li>{@code stereotypes} - array of applied stereotype names</li>
      *   <li>{@code documentation} - concatenated body text of owned comments</li>
-     *   <li>{@code taggedValues} - object mapping tag name to string value</li>
+     *   <li>{@code taggedValues} - object mapping tag name to serialized value</li>
      *   <li>{@code childCount} - number of directly owned elements</li>
      * </ul>
      *
@@ -128,7 +133,10 @@ public class ElementSerializer {
                             try {
                                 Object val = StereotypesHelper.getStereotypePropertyFirst(element, st, tagName);
                                 if (val != null) {
-                                    tags.addProperty(tagName, String.valueOf(val));
+                                    JsonElement serialized = serializeTaggedValue(val);
+                                    if (serialized != null) {
+                                        tags.add(tagName, serialized);
+                                    }
                                 }
                             } catch (Exception e) {
                                 LOG.log(Level.FINE, "Could not read tag " + tagName, e);
@@ -142,6 +150,11 @@ public class ElementSerializer {
             }
         } catch (Exception e) {
             LOG.log(Level.FINE, "Could not read tagged values for " + element.getID(), e);
+        }
+
+        // Structured readback for information and item flows.
+        if (element instanceof InformationFlow) {
+            appendInformationFlowFields(json, (InformationFlow) element);
         }
 
         // Child count
@@ -179,5 +192,76 @@ public class ElementSerializer {
         }
 
         return json;
+    }
+
+    private static void appendInformationFlowFields(JsonObject json, InformationFlow informationFlow) {
+        try {
+            json.add("informationSources", toCompactArray(informationFlow.getInformationSource()));
+            json.add("informationTargets", toCompactArray(informationFlow.getInformationTarget()));
+            json.add("conveyed", toCompactArray(informationFlow.getConveyed()));
+            json.add("realizingConnectors", toCompactArray(informationFlow.getRealizingConnector()));
+
+            Stereotype itemFlow = StereotypesHelper.getAppliedStereotypeByString(
+                    informationFlow,
+                    "ItemFlow");
+            if (itemFlow != null) {
+                Object itemProperty = StereotypesHelper.getStereotypePropertyFirst(
+                        informationFlow,
+                        itemFlow,
+                        "itemProperty");
+                if (itemProperty instanceof Element) {
+                    json.add("itemProperty", toJsonCompact((Element) itemProperty));
+                }
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE,
+                    "Could not read structured information flow fields for " + informationFlow.getID(),
+                    e);
+        }
+    }
+
+    private static JsonArray toCompactArray(Collection<? extends Element> elements) {
+        JsonArray array = new JsonArray();
+        if (elements == null) {
+            return array;
+        }
+        for (Element element : elements) {
+            if (element != null) {
+                array.add(toJsonCompact(element));
+            }
+        }
+        return array;
+    }
+
+    private static JsonElement serializeTaggedValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean) {
+            return new JsonPrimitive((Boolean) value);
+        }
+        if (value instanceof Number) {
+            return new JsonPrimitive((Number) value);
+        }
+        if (value instanceof String) {
+            return new JsonPrimitive((String) value);
+        }
+        if (value instanceof Character) {
+            return new JsonPrimitive((Character) value);
+        }
+        if (value instanceof Element) {
+            return toJsonCompact((Element) value);
+        }
+        if (value instanceof Collection<?>) {
+            JsonArray array = new JsonArray();
+            for (Object item : (Collection<?>) value) {
+                JsonElement serialized = serializeTaggedValue(item);
+                if (serialized != null) {
+                    array.add(serialized);
+                }
+            }
+            return array;
+        }
+        return new JsonPrimitive(String.valueOf(value));
     }
 }

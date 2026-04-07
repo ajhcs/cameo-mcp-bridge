@@ -452,6 +452,9 @@ public class ElementMutationHandler implements HttpHandler {
             case "datatype":      return ef.createDataTypeInstance();
             case "signal":        return ef.createSignalInstance();
             case "property":      return ef.createPropertyInstance();
+            case "flow-property":
+            case "flowproperty":
+                return ef.createPropertyInstance();
             case "operation":     return ef.createOperationInstance();
             case "port":          return ef.createPortInstance();
             case "enumeration":   return ef.createEnumerationInstance();
@@ -494,7 +497,7 @@ public class ElementMutationHandler implements HttpHandler {
                 throw new IllegalArgumentException("Unsupported element type: " + type
                         + ". Supported: package, profile, stereotype, block, class, use-case, activity, actor, "
                         + "statemachine, state, pseudostate, initial-state, requirement, interface-block, interface, "
-                        + "constraint-block, value-type, datatype, signal, property, operation, port, enumeration, component, "
+                        + "constraint-block, value-type, datatype, signal, property, flow-property, operation, port, enumeration, component, "
                         + "constraint, comment, call-behavior-action, activity-partition, "
                         + "initial-node, activity-final, decision, merge, fork, join, "
                         + "flow-final, input-pin, output-pin, opaque-action, action");
@@ -572,6 +575,9 @@ public class ElementMutationHandler implements HttpHandler {
             case "value-type":
             case "valuetype":
                 return "valueType";
+            case "flow-property":
+            case "flowproperty":
+                return "flowProperty";
             default:
                 return null;
         }

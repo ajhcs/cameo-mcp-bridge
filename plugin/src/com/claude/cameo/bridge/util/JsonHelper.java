@@ -1,13 +1,17 @@
 package com.claude.cameo.bridge.util;
 
 import com.sun.net.httpserver.HttpExchange;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.util.ArrayList;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -129,5 +133,35 @@ public class JsonHelper {
         }
         String value = body.get(key).getAsString();
         return value.isEmpty() ? null : value;
+    }
+
+    /**
+     * Extract an optional array of strings from a JSON body.
+     *
+     * @param body the JSON object
+     * @param key  the field name
+     * @return the list value, or null if missing or null
+     * @throws IllegalArgumentException if the field is not an array of strings
+     */
+    public static List<String> optionalStringList(JsonObject body, String key) {
+        if (!body.has(key) || body.get(key).isJsonNull()) {
+            return null;
+        }
+        if (!body.get(key).isJsonArray()) {
+            throw new IllegalArgumentException(key + " must be an array of strings");
+        }
+        JsonArray array = body.getAsJsonArray(key);
+        List<String> values = new ArrayList<>(array.size());
+        for (JsonElement item : array) {
+            if (!item.isJsonPrimitive() || !item.getAsJsonPrimitive().isString()) {
+                throw new IllegalArgumentException(key + " must contain only strings");
+            }
+            String value = item.getAsString();
+            if (value == null || value.isEmpty()) {
+                throw new IllegalArgumentException(key + " must not contain empty strings");
+            }
+            values.add(value);
+        }
+        return values;
     }
 }

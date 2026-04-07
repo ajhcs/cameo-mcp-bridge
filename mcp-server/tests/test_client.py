@@ -215,6 +215,32 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             request.await_args.kwargs["json_body"],
         )
 
+    async def test_create_relationship_includes_information_flow_fields(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_relationship(
+                type="ItemFlow",
+                source_id="port-a",
+                target_id="port-b",
+                owner_id="system-block",
+                realizing_connector_id="connector-1",
+                conveyed_ids=["io-block"],
+                item_property_id="flow-prop-1",
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual(
+            {
+                "type": "ItemFlow",
+                "sourceId": "port-a",
+                "targetId": "port-b",
+                "ownerId": "system-block",
+                "realizingConnectorId": "connector-1",
+                "conveyedIds": ["io-block"],
+                "itemPropertyId": "flow-prop-1",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
     async def test_list_matrices_passes_filters(self) -> None:
         with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"count": 0})) as request:
             await client.list_matrices(
@@ -261,6 +287,75 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
                 "scopeId": "pkg-2",
                 "rowScopeId": "pkg-3",
                 "columnScopeId": "pkg-4",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_matrix_includes_type_domains(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_matrix(
+                kind="refine",
+                parent_id="pkg-1",
+                row_types=["UseCase", "Property"],
+                column_types=["Requirement"],
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual(
+            {
+                "kind": "refine",
+                "parentId": "pkg-1",
+                "rowTypes": ["UseCase", "Property"],
+                "columnTypes": ["Requirement"],
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_matrix_normalizes_kind_aliases(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_matrix(
+                kind="Refine Requirement Matrix",
+                parent_id="pkg-1",
+            )
+
+        self.assertEqual(
+            {
+                "kind": "refine",
+                "parentId": "pkg-1",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_diagram_normalizes_internal_block_alias(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"id": "dia-1"})) as request:
+            await client.create_diagram(
+                type="InternalBlockDiagram",
+                name="Context",
+                parent_id="block-1",
+            )
+
+        self.assertEqual(
+            {
+                "type": "IBD",
+                "name": "Context",
+                "parentId": "block-1",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_diagram_normalizes_sysml_ibd_alias(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"id": "dia-1"})) as request:
+            await client.create_diagram(
+                type="SysML IBD",
+                name="Context",
+                parent_id="block-1",
+            )
+
+        self.assertEqual(
+            {
+                "type": "IBD",
+                "name": "Context",
+                "parentId": "block-1",
             },
             request.await_args.kwargs["json_body"],
         )
