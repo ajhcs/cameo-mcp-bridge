@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import httpx
 
-BRIDGE_PLUGIN_VERSION = "2.0.0"
+BRIDGE_PLUGIN_VERSION = "2.1.0"
 BRIDGE_API_VERSION = "v1"
 BRIDGE_HANDSHAKE_VERSION = "1"
 
@@ -182,24 +182,30 @@ if (partition == null) {{
     throw new IllegalArgumentException("Activity partition not found: " + partitionId)
 }}
 
-def findPartitionHeader
-findPartitionHeader = {{ elements, targetId ->
+def findPartitionPresentation
+findPartitionPresentation = {{ elements, targetId ->
+    def fallback = null
     for (pe in (elements ?: [])) {{
         def peElement = null
         try {{
             peElement = pe?.element
         }} catch (ignored) {{}}
-        if (peElement != null
-                && targetId == peElement.ID
-                && pe.getClass().getSimpleName() == "SwimlaneHeaderView") {{
-            return pe
+        if (peElement != null && targetId == peElement.ID) {{
+            def className = pe.getClass().getSimpleName()
+            if (className == "SwimlaneHeaderView") {{
+                return pe
+            }}
+            if (fallback == null
+                    && (className.contains("Swimlane") || className.contains("Partition"))) {{
+                fallback = pe
+            }}
         }}
-        def nested = findPartitionHeader(pe?.presentationElements, targetId)
+        def nested = findPartitionPresentation(pe?.presentationElements, targetId)
         if (nested != null) {{
             return nested
         }}
     }}
-    return null
+    return fallback
 }}
 
 def findFirstSwimlane
@@ -216,9 +222,9 @@ findFirstSwimlane = {{ elements ->
     return null
 }}
 
-def existingHeader = findPartitionHeader(dpe.getPresentationElements(), partitionId)
-if (existingHeader != null) {{
-    def bounds = existingHeader.getBounds()
+def existingPartitionPresentation = findPartitionPresentation(dpe.getPresentationElements(), partitionId)
+if (existingPartitionPresentation != null) {{
+    def bounds = existingPartitionPresentation.getBounds()
     return gson.toJson([
         diagramId: diagramId,
         elementId: partitionId,
@@ -227,12 +233,12 @@ if (existingHeader != null) {{
         width: bounds?.width,
         height: bounds?.height,
         added: true,
-        presentationId: existingHeader.ID,
+        presentationId: existingPartitionPresentation.ID,
         receipt: [
             operation: "addShape",
             diagramId: diagramId,
             elementId: partitionId,
-            presentationId: existingHeader.ID,
+            presentationId: existingPartitionPresentation.ID,
             status: "existing",
             activityPartitionFallback: true,
         ],
@@ -251,23 +257,28 @@ if (siblingPartitions.isEmpty()) {{
 
 def existingSwimlane = findFirstSwimlane(dpe.getPresentationElements())
 def existingBounds = existingSwimlane?.getBounds()
-def laneCount = Math.max(siblingPartitions.size(), 1)
-def laneWidth = requestedWidth != null ? requestedWidth.intValue()
-    : (existingBounds != null ? Math.max((int) Math.floor(existingBounds.width / laneCount), 1) : 220)
-def totalWidth = requestedWidth != null ? laneWidth * laneCount
+int laneCount = Math.max(siblingPartitions.size(), 1)
+int laneWidth = requestedWidth != null ? requestedWidth.intValue()
+    : (existingBounds != null ? Math.max((int) (existingBounds.width / laneCount), 1) : 220)
+int totalWidth = requestedWidth != null ? laneWidth * laneCount
     : (existingBounds != null ? existingBounds.width : laneWidth * laneCount)
-def totalHeight = requestedHeight != null ? requestedHeight.intValue()
+int totalHeight = requestedHeight != null ? requestedHeight.intValue()
     : (existingBounds != null ? existingBounds.height : 280)
-def targetX = requestedX != null ? requestedX.intValue() : (existingBounds != null ? existingBounds.x : 100)
-def targetY = requestedY != null ? requestedY.intValue() : (existingBounds != null ? existingBounds.y : 100)
+int targetX = requestedX != null ? requestedX.intValue() : (existingBounds != null ? existingBounds.x : 100)
+int targetY = requestedY != null ? requestedY.intValue() : (existingBounds != null ? existingBounds.y : 100)
+
+if (existingSwimlane != null) {{
+    throw new IllegalStateException(
+        "Activity partition diagram fallback found an existing swimlane but could not "
+        + "locate a presentation for partition " + partitionId + ". Refusing to rebuild "
+        + "the entire swimlane container automatically."
+    )
+}}
 
 def pem = PresentationElementsManager.getInstance()
 def sm = SessionManager.getInstance()
 sm.createSession(project, "MCP Add Activity Partition Swimlane")
 try {{
-    if (existingSwimlane != null) {{
-        pem.deletePresentationElement(existingSwimlane)
-    }}
     def swimlane = pem.createSwimlane([], siblingPartitions, dpe)
     if (swimlane == null) {{
         throw new IllegalStateException("Failed to create swimlane for activity partition: " + partitionId)
@@ -279,11 +290,13 @@ try {{
     throw e
 }}
 
-def createdHeader = findPartitionHeader(dpe.getPresentationElements(), partitionId)
-if (createdHeader == null) {{
-    throw new IllegalStateException("Failed to locate created swimlane header for activity partition: " + partitionId)
+def createdPartitionPresentation = findPartitionPresentation(dpe.getPresentationElements(), partitionId)
+if (createdPartitionPresentation == null) {{
+    throw new IllegalStateException(
+        "Failed to locate the created swimlane presentation for activity partition: " + partitionId
+    )
 }}
-def createdBounds = createdHeader.getBounds()
+def createdBounds = createdPartitionPresentation.getBounds()
 return gson.toJson([
     diagramId: diagramId,
     elementId: partitionId,
@@ -292,12 +305,12 @@ return gson.toJson([
     width: createdBounds?.width,
     height: createdBounds?.height,
     added: true,
-    presentationId: createdHeader.ID,
+    presentationId: createdPartitionPresentation.ID,
     receipt: [
         operation: "addShape",
         diagramId: diagramId,
         elementId: partitionId,
-        presentationId: createdHeader.ID,
+        presentationId: createdPartitionPresentation.ID,
         status: "created",
         activityPartitionFallback: true,
     ],

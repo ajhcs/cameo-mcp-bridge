@@ -282,9 +282,9 @@ This matrix family is separate from the diagram shape/path API. It manages nativ
 | `cameo_list_diagrams` | List all diagrams in the project |
 | `cameo_create_diagram` | Create a new diagram (18 types supported) |
 | `cameo_add_to_diagram` | Place a model element on a diagram canvas and return its `presentationId` |
-| `cameo_get_diagram_image` | Export a diagram as base64-encoded PNG |
+| `cameo_get_diagram_image` | Export a diagram image with optional metadata-only, resize, and transcode controls |
 | `cameo_auto_layout` | Apply Cameo's built-in auto-layout |
-| `cameo_list_diagram_shapes` | List all shapes/paths with presentation IDs, bounds, and counts |
+| `cameo_list_diagram_shapes` | List diagram shapes with paging, filtering, summary counts, and presentation IDs |
 | `cameo_get_shape_properties` | Read the current display properties of one diagram shape |
 | `cameo_move_shapes` | Reposition/resize shapes on a diagram with per-item results |
 | `cameo_delete_shapes` | Remove shapes from a diagram (model elements preserved) |
@@ -438,8 +438,8 @@ The bridge builds models correctly -- elements, relationships, directionality, s
 
 ### API Gaps
 - **DurationConstraint / TimeConstraint** creation through macros is unreliable due to complex ownership chains in the Cameo API (`DurationInterval.setMin/setMax` requires `Duration` instances with specific ownership that the API rejects); add these manually in Cameo's UI
-- **Large diagram images** may exceed MCP client token limits when returned as base64; use the macro workaround above to save directly to disk
-- **`format` parameter** on `cameo_get_diagram_image` is accepted but ignored (always exports PNG)
+- **Large diagram images** can still exceed MCP client token limits at full resolution; prefer `cameo_get_diagram_image(include_image=false)` for metadata-only reads or use `max_width` / `max_height` with `format="jpeg"` before dropping to a macro-based file export
+- **Direct file export** is still not first-class; if you need the bridge to save a diagram straight to disk, use `cameo_execute_macro` with `ImageExporter.export(...)`
 - **Session recovery edge case** -- if a macro crashes mid-transaction, `cameo_reset_session` may itself throw `TransactionAlreadyCommitedException`; in this case, saving and reopening the project is the most reliable recovery
 
 ### Compatibility

@@ -214,6 +214,35 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
         )
         request.assert_not_awaited()
 
+    def test_activity_partition_fallback_script_uses_integer_rectangle_dimensions(self) -> None:
+        script = client._activity_partition_add_script(
+            "dia-1",
+            "partition-1",
+            x=80,
+            y=120,
+            width=220,
+            height=320,
+        )
+
+        self.assertIn("int laneCount =", script)
+        self.assertIn("int totalWidth =", script)
+        self.assertIn("int totalHeight =", script)
+        self.assertIn("new Rectangle(targetX, targetY, totalWidth, totalHeight)", script)
+
+    def test_activity_partition_fallback_script_refuses_destructive_swimlane_rebuild(self) -> None:
+        script = client._activity_partition_add_script(
+            "dia-1",
+            "partition-1",
+            x=None,
+            y=None,
+            width=None,
+            height=None,
+        )
+
+        self.assertNotIn("deletePresentationElement(existingSwimlane)", script)
+        self.assertIn("Refusing to rebuild", script)
+        self.assertIn("findPartitionPresentation", script)
+
     async def test_add_to_diagram_keeps_rest_path_for_non_partition_elements(self) -> None:
         with patch(
             "cameo_mcp.client.get_element",

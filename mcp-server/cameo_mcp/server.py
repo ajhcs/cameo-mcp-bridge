@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import base64
+from collections import Counter
+from io import BytesIO
+from typing import Annotated, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
+from PIL import Image
+from pydantic import AliasChoices, Field
 
 from cameo_mcp import client, verification
 from cameo_mcp.methodology import (
@@ -47,6 +52,205 @@ def _mcp_result(result: dict[str, Any]) -> dict[str, Any]:
     reaches the client.
     """
     return result
+
+
+def _count_by_key(items: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counter = Counter(str(item.get(key)) for item in items if item.get(key))
+    return dict(sorted(counter.items(), key=lambda entry: (-entry[1], entry[0].lower())))
+
+
+def _filter_diagram_shapes(
+    result: dict[str, Any],
+    *,
+    limit: int,
+    offset: int,
+    shape_type: Optional[str],
+    element_type: Optional[str],
+    parent_presentation_id: Optional[str],
+    include_bounds: bool,
+    include_child_count: bool,
+    summary_only: bool,
+) -> dict[str, Any]:
+    shapes = [shape for shape in (result.get("shapes") or []) if isinstance(shape, dict)]
+
+    def _matches(shape: dict[str, Any]) -> bool:
+        if shape_type and str(shape.get("shapeType", "")).lower() != shape_type.lower():
+            return False
+        if element_type and str(shape.get("elementType", "")).lower() != element_type.lower():
+            return False
+        if (
+            parent_presentation_id
+            and str(shape.get("parentPresentationId", "")) != parent_presentation_id
+        ):
+            return False
+        return True
+
+    filtered = [shape for shape in shapes if _matches(shape)]
+    start = min(max(offset, 0), len(filtered))
+    end = min(start + max(limit, 0), len(filtered))
+    page = filtered[start:end]
+
+    if not include_bounds or not include_child_count:
+        projected_page: list[dict[str, Any]] = []
+        for shape in page:
+            projected = dict(shape)
+            if not include_bounds:
+                projected.pop("bounds", None)
+            if not include_child_count:
+                projected.pop("childCount", None)
+            projected_page.append(projected)
+        page = projected_page
+
+    response: dict[str, Any] = {
+        "diagramId": result.get("diagramId"),
+        "count": len(page),
+        "returned": len(page),
+        "totalCount": len(filtered),
+        "shapeCount": len(filtered),
+        "limit": limit,
+        "offset": start,
+        "hasMore": end < len(filtered),
+        "filters": {
+            "shapeType": shape_type,
+            "elementType": element_type,
+            "parentPresentationId": parent_presentation_id,
+            "includeBounds": include_bounds,
+            "includeChildCount": include_child_count,
+            "summaryOnly": summary_only,
+        },
+    }
+    if end < len(filtered):
+        response["nextOffset"] = end
+
+    if summary_only:
+        response["shapeTypeCounts"] = _count_by_key(filtered, "shapeType")
+        response["elementTypeCounts"] = _count_by_key(filtered, "elementType")
+        response["parentedShapeCount"] = sum(
+            1 for shape in filtered if shape.get("parentPresentationId")
+        )
+        return response
+
+    response["shapes"] = page
+    return response
+
+
+def _transform_diagram_image(
+    result: dict[str, Any],
+    *,
+    include_image: bool,
+    format: str,
+    max_width: Optional[int],
+    max_height: Optional[int],
+    quality: int,
+) -> dict[str, Any]:
+    base64_image = result.get("image")
+    if not isinstance(base64_image, str) or not base64_image:
+        return dict(result)
+
+    image_bytes = base64.b64decode(base64_image)
+    response = dict(result)
+    response["imageBytes"] = len(image_bytes)
+
+    if not include_image:
+        response.pop("image", None)
+        response["imageOmitted"] = True
+        return response
+
+    normalized_format = format.lower()
+    if normalized_format == "jpg":
+        normalized_format = "jpeg"
+    if normalized_format not in {"png", "jpeg", "webp"}:
+        raise ValueError("format must be one of: png, jpeg, jpg, webp")
+
+    resize_requested = max_width is not None or max_height is not None
+    transcode_requested = normalized_format != str(result.get("format", "png")).lower()
+    if not resize_requested and not transcode_requested:
+        return response
+
+    with Image.open(BytesIO(image_bytes)) as image:
+        transformed = image.copy()
+        if resize_requested:
+            target_width = max_width if max_width is not None and max_width > 0 else image.width
+            target_height = (
+                max_height if max_height is not None and max_height > 0 else image.height
+            )
+            transformed.thumbnail((target_width, target_height), Image.Resampling.LANCZOS)
+
+        buffer = BytesIO()
+        if normalized_format == "jpeg":
+            if transformed.mode not in {"RGB", "L"}:
+                flattened = Image.new("RGB", transformed.size, "white")
+                alpha_source = transformed.convert("RGBA")
+                flattened.paste(alpha_source, mask=alpha_source.getchannel("A"))
+                transformed = flattened
+            transformed.save(buffer, format="JPEG", quality=max(1, min(quality, 100)))
+        elif normalized_format == "webp":
+            transformed.save(buffer, format="WEBP", quality=max(1, min(quality, 100)))
+        else:
+            transformed.save(buffer, format="PNG")
+
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        response["format"] = "jpg" if normalized_format == "jpeg" else normalized_format
+        response["width"] = transformed.width
+        response["height"] = transformed.height
+        response["image"] = encoded
+        response["imageBytes"] = len(buffer.getvalue())
+        return response
+
+
+DiagramIdArg = Annotated[
+    str,
+    Field(validation_alias=AliasChoices("diagram_id", "diagramId")),
+]
+ElementIdArg = Annotated[
+    str,
+    Field(validation_alias=AliasChoices("element_id", "elementId")),
+]
+ContainmentRootArg = Annotated[
+    Optional[str],
+    Field(
+        validation_alias=AliasChoices(
+            "root_id",
+            "rootId",
+            "parent_id",
+            "parentId",
+        )
+    ),
+]
+QueryScopeArg = Annotated[
+    Optional[str],
+    Field(
+        validation_alias=AliasChoices(
+            "package_id",
+            "packageId",
+            "package_name",
+            "packageName",
+            "package",
+            "owner_id",
+            "ownerId",
+            "root_id",
+            "rootId",
+        )
+    ),
+]
+ContainerPresentationArg = Annotated[
+    Optional[str],
+    Field(
+        validation_alias=AliasChoices(
+            "container_presentation_id",
+            "containerPresentationId",
+        )
+    ),
+]
+ParentPresentationArg = Annotated[
+    Optional[str],
+    Field(
+        validation_alias=AliasChoices(
+            "parent_presentation_id",
+            "parentPresentationId",
+        )
+    ),
+]
 
 
 # -- Status / Project --------------------------------------------------------
@@ -295,7 +499,7 @@ async def cameo_reset_session() -> dict[str, Any]:
 async def cameo_query_elements(
     type: Optional[str] = None,
     name: Optional[str] = None,
-    package_name: Optional[str] = None,
+    package_id: QueryScopeArg = None,
     stereotype: Optional[str] = None,
     recursive: bool = True,
     limit: int = 200,
@@ -314,7 +518,10 @@ async def cameo_query_elements(
               ConstraintBlock (SysML), FlowProperty (SysML),
               InterfaceBlock, ValueType.
         name: Exact or partial element name to match.
-        package_name: Restrict search to a specific package by name.
+        package_id: Restrict search to an owning/root element ID. Despite the
+                    legacy name in older builds, the underlying bridge scopes
+                    by element ID, not package display name. CamelCase aliases
+                    such as `packageId`, `ownerId`, and `rootId` are accepted.
         stereotype: Filter by applied stereotype name (e.g. "block",
                     "requirement", "interfaceBlock").
         recursive: Whether to search recursively into sub-packages.
@@ -330,7 +537,7 @@ async def cameo_query_elements(
     result = await client.query_elements(
         type=type,
         name=name,
-        package=package_name,
+        package=package_id,
         stereotype=stereotype,
         recursive=recursive,
         limit=limit,
@@ -359,7 +566,7 @@ async def cameo_get_element(element_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def cameo_get_containment_tree(
-    root_id: Optional[str] = None,
+    root_id: ContainmentRootArg = None,
     depth: int = 3,
     view: str = "compact",
 ) -> dict[str, Any]:
@@ -390,7 +597,7 @@ async def cameo_get_containment_tree(
 
 @mcp.tool()
 async def cameo_list_containment_children(
-    root_id: Optional[str] = None,
+    root_id: ContainmentRootArg = None,
     limit: int = 50,
     offset: int = 0,
     type: Optional[str] = None,
@@ -714,7 +921,7 @@ async def cameo_create_relationship(
 
 @mcp.tool()
 async def cameo_get_relationships(
-    element_id: str,
+    element_id: ElementIdArg,
     direction: str = "both",
 ) -> dict[str, Any]:
     """Get relationships for an element.
@@ -1116,13 +1323,13 @@ async def cameo_create_diagram(
 
 @mcp.tool()
 async def cameo_add_to_diagram(
-    diagram_id: str,
-    element_id: str,
+    diagram_id: DiagramIdArg,
+    element_id: ElementIdArg,
     x: int = 100,
     y: int = 100,
     width: int = -1,
     height: int = -1,
-    container_presentation_id: Optional[str] = None,
+    container_presentation_id: ContainerPresentationArg = None,
 ) -> dict[str, Any]:
     """Add a model element to a diagram canvas.
 
@@ -1159,26 +1366,49 @@ async def cameo_add_to_diagram(
     return _mcp_result(result)
 
 @mcp.tool()
-async def cameo_get_diagram_image(diagram_id: str) -> dict[str, Any]:
+async def cameo_get_diagram_image(
+    diagram_id: DiagramIdArg,
+    include_image: bool = True,
+    format: str = "png",
+    max_width: Optional[int] = None,
+    max_height: Optional[int] = None,
+    quality: int = 85,
+) -> dict[str, Any]:
     """Export a diagram as a base64-encoded PNG image.
 
-    Returns a base64-encoded PNG. For large diagrams that exceed token limits,
-    use cameo_execute_macro with ImageExporter.export(dpe, ImageExporter.PNG, file)
-    to save directly to disk instead.
+    By default this returns the full base64 payload. To keep large diagrams
+    below MCP token limits, set `include_image=False` for metadata only and/or
+    use `max_width` / `max_height` plus `format="jpeg"` to shrink the payload.
 
     Args:
         diagram_id: The unique ID of the diagram to export.
+        include_image: When false, omit the base64 payload and return only
+                       image metadata.
+        format: Output encoding for the MCP response: `png` (default), `jpeg`,
+                `jpg`, or `webp`.
+        max_width: Optional maximum width in pixels for returned image data.
+        max_height: Optional maximum height in pixels for returned image data.
+        quality: Lossy encoder quality for `jpeg`/`webp` outputs.
 
     Returns:
         JSON with base64-encoded image data and metadata (width, height).
     """
     result = await client.get_diagram_image(diagram_id)
-    return _mcp_result(result)
+    return _mcp_result(
+        _transform_diagram_image(
+            result,
+            include_image=include_image,
+            format=format,
+            max_width=max_width,
+            max_height=max_height,
+            quality=quality,
+        )
+    )
 
 
 @mcp.tool()
 async def cameo_verify_diagram_visual(
-    diagram_id: str,
+    diagram_id: DiagramIdArg,
     expected_element_ids: Optional[list[str]] = None,
     expected_relationship_ids: Optional[list[str]] = None,
     min_shape_count: int = 0,
@@ -1235,7 +1465,7 @@ async def cameo_verify_diagram_visual(
 
 
 @mcp.tool()
-async def cameo_auto_layout(diagram_id: str) -> dict[str, Any]:
+async def cameo_auto_layout(diagram_id: DiagramIdArg) -> dict[str, Any]:
     """Apply automatic layout to a diagram.
 
     Rearranges all shapes on the diagram using CATIA Magic's built-in
@@ -1255,7 +1485,17 @@ async def cameo_auto_layout(diagram_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def cameo_list_diagram_shapes(diagram_id: str) -> dict[str, Any]:
+async def cameo_list_diagram_shapes(
+    diagram_id: DiagramIdArg,
+    limit: int = 200,
+    offset: int = 0,
+    shape_type: Optional[str] = None,
+    element_type: Optional[str] = None,
+    parent_presentation_id: ParentPresentationArg = None,
+    include_bounds: bool = True,
+    include_child_count: bool = True,
+    summary_only: bool = False,
+) -> dict[str, Any]:
     """List all shapes and relationship paths currently on a diagram.
 
     Returns every presentation element (shape, path, label) on the diagram
@@ -1273,6 +1513,19 @@ async def cameo_list_diagram_shapes(diagram_id: str) -> dict[str, Any]:
 
     Args:
         diagram_id: The unique ID of the diagram to inspect.
+        limit: Maximum number of filtered shapes to return. Defaults to 200.
+        offset: Zero-based offset into the filtered shape list.
+        shape_type: Optional presentation-class filter such as
+                    `ControlFlowView` or `SwimlaneHeaderView`.
+        element_type: Optional model-element filter such as `OpaqueAction`,
+                      `ActivityPartition`, or `ControlFlow`.
+        parent_presentation_id: Optional parent presentation filter for nested
+                                diagram content.
+        include_bounds: Include per-shape bounds in the returned page.
+        include_child_count: Include per-shape child counts in the returned
+                             page.
+        summary_only: When true, omit `shapes` and return counts/groupings
+                      instead of the shape page.
 
     Returns:
         JSON with arrays of shapes and paths, each containing
@@ -1280,7 +1533,19 @@ async def cameo_list_diagram_shapes(diagram_id: str) -> dict[str, Any]:
         reference info (elementId, name, type).
     """
     result = await client.list_diagram_shapes(diagram_id)
-    return _mcp_result(result)
+    return _mcp_result(
+        _filter_diagram_shapes(
+            result,
+            limit=limit,
+            offset=offset,
+            shape_type=shape_type,
+            element_type=element_type,
+            parent_presentation_id=parent_presentation_id,
+            include_bounds=include_bounds,
+            include_child_count=include_child_count,
+            summary_only=summary_only,
+        )
+    )
 
 
 @mcp.tool()

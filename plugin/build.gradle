@@ -58,7 +58,7 @@ tasks.named('compileJava') {
 
 jar {
     archiveBaseName = 'cameo-mcp-bridge'
-    archiveVersion = '2.0.0'
+    archiveVersion = '2.1.0'
     destinationDirectory = layout.buildDirectory.dir('libs')
 }
 

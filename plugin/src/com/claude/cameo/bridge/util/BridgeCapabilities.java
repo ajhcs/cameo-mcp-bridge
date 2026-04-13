@@ -15,7 +15,7 @@ public final class BridgeCapabilities {
 
     public static final String PLUGIN_ID = "com.claude.cameo.bridge";
     public static final String PLUGIN_NAME = "Cameo MCP Bridge";
-    public static final String PLUGIN_VERSION = "2.0.0";
+    public static final String PLUGIN_VERSION = "2.1.0";
     public static final String API_VERSION = "v1";
     public static final String HANDSHAKE_VERSION = "1";
     public static final String STATUS_PATH = "/api/v1/status";

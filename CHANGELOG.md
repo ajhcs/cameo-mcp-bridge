@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.1.0 - 2026-04-13
+
+Minor release focused on hardening the MCP contract around diagram inspection and activity swimlane editing.
+
+### Added
+
+- CamelCase compatibility aliases for common MCP arguments such as `diagramId`, `elementId`, `parentId`, `ownerId`, and `containerPresentationId` on the affected Python tools
+- Token-safe diagram export controls on `cameo_get_diagram_image`, including metadata-only responses plus optional resize and JPEG/WEBP transcoding
+- Paging, filtering, nested-parent filtering, and summary-only shape inventory support on `cameo_list_diagram_shapes`
+- Regression coverage for MCP schema aliases, diagram response shaping, and the guarded activity-partition fallback path
+
+### Fixed
+
+- Stopped the `ActivityPartition` macro fallback from deleting and rebuilding an existing swimlane container when it cannot safely resolve the partition presentation
+- Forced integer rectangle dimensions in the swimlane fallback so Groovy no longer produces `Rectangle(Integer, Integer, Double, Double)` constructor failures
+- Corrected the effective scope contract for `cameo_query_elements` so owner/root/package ID aliases reach the underlying bridge as element IDs
+
+### Changed
+
+- Bumped the Python MCP server, plugin, and OOSEM methodology pack release line to `2.1.0`
+- Updated the README and release notes to document the safer large-diagram workflow and the new argument/shape-handling behavior
+
 ## 2.0.0 - 2026-04-12
 
 Major release focused on semantic MBSE support for Cameo-based OOSEM workflows.
