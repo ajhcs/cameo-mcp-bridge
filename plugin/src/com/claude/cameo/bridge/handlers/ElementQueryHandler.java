@@ -7,6 +7,8 @@ import com.claude.cameo.bridge.util.JsonHelper;
 import com.nomagic.magicdraw.uml.ClassTypes;
 import com.nomagic.magicdraw.uml.Finder;
 import com.nomagic.magicdraw.uml2.Connectors;
+import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ActivityEdge;
+import com.nomagic.uml2.ext.magicdraw.activities.mdfundamentalactivities.ActivityNode;
 import com.nomagic.uml2.ext.magicdraw.auxiliaryconstructs.mdinformationflows.InformationFlow;
 import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.ConnectableElement;
 import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.Connector;
@@ -15,6 +17,7 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.DirectedRelationship;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Package;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Relationship;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
 import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
@@ -24,12 +27,15 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -53,6 +59,23 @@ public class ElementQueryHandler implements HttpHandler {
     public void handle(HttpExchange exchange) throws IOException {
         try {
             String method = exchange.getRequestMethod();
+            String path = exchange.getRequestURI().getPath();
+
+            if (path.equals("/api/v1/elements/interface-flow-properties")) {
+                if ("OPTIONS".equals(method)) {
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, OPTIONS");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                    exchange.sendResponseHeaders(204, -1);
+                    return;
+                }
+                if (!"POST".equals(method)) {
+                    HttpBridgeServer.sendError(exchange, 405, "METHOD_NOT_ALLOWED",
+                            "Only POST is supported");
+                    return;
+                }
+                handleInterfaceFlowProperties(exchange);
+                return;
+            }
 
             if ("OPTIONS".equals(method)) {
                 exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -66,8 +89,6 @@ public class ElementQueryHandler implements HttpHandler {
                         "Only GET is supported");
                 return;
             }
-
-            String path = exchange.getRequestURI().getPath();
 
             if (path.equals("/api/v1/elements")) {
                 handleQueryElements(exchange);
@@ -235,6 +256,69 @@ public class ElementQueryHandler implements HttpHandler {
         HttpBridgeServer.sendJson(exchange, 200, result);
     }
 
+    private void handleInterfaceFlowProperties(HttpExchange exchange) throws Exception {
+        JsonObject body = JsonHelper.parseBody(exchange);
+        List<String> interfaceIds = JsonHelper.optionalStringList(body, "interfaceIds");
+        if (interfaceIds == null || interfaceIds.isEmpty()) {
+            HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST",
+                    "interfaceIds must be a non-empty array of interface block IDs");
+            return;
+        }
+
+        JsonObject result = EdtDispatcher.read(project -> {
+            JsonArray interfaceBlocks = new JsonArray();
+            JsonArray flowProperties = new JsonArray();
+
+            for (String interfaceId : interfaceIds) {
+                Element element = (Element) project.getElementByID(interfaceId);
+                if (element == null) {
+                    throw new IllegalArgumentException("Interface block not found: " + interfaceId);
+                }
+                if (!(element instanceof com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class)) {
+                    throw new IllegalArgumentException("Interface block is not a class: " + interfaceId);
+                }
+
+                com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class interfaceBlock =
+                        (com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class) element;
+                interfaceBlocks.add(ElementSerializer.toJsonCompact(interfaceBlock));
+
+                Collection<Property> ownedAttributes = interfaceBlock.getOwnedAttribute();
+                if (ownedAttributes == null || ownedAttributes.isEmpty()) {
+                    continue;
+                }
+
+                for (Property prop : ownedAttributes) {
+                    if (prop == null) {
+                        continue;
+                    }
+
+                    Stereotype flowPropertyStereo = getFlowPropertyStereotype(prop);
+                    if (flowPropertyStereo == null) {
+                        continue;
+                    }
+
+                    JsonObject flowProperty = ElementSerializer.toJsonCompact(prop);
+                    flowProperty.addProperty("ownerId", interfaceBlock.getID());
+                    flowProperty.addProperty("ownerName", safeName(interfaceBlock));
+
+                    String direction = readFlowPropertyDirection(prop, flowPropertyStereo);
+                    if (direction != null) {
+                        flowProperty.addProperty("direction", direction);
+                    }
+
+                    flowProperties.add(flowProperty);
+                }
+            }
+
+            JsonObject response = new JsonObject();
+            response.add("interfaceBlocks", interfaceBlocks);
+            response.add("flowProperties", flowProperties);
+            return response;
+        });
+
+        HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
     private void handleGetRelationships(HttpExchange exchange, String elementId) throws Exception {
         JsonObject result = EdtDispatcher.read(project -> {
             Element element = (Element) project.getElementByID(elementId);
@@ -244,12 +328,14 @@ public class ElementQueryHandler implements HttpHandler {
 
             JsonArray outgoing = new JsonArray();
             JsonArray incoming = new JsonArray();
+            Set<String> directedRelationshipIds = new HashSet<>();
 
             try {
                 Collection<DirectedRelationship> sourceRels =
                         element.get_directedRelationshipOfSource();
                 if (sourceRels != null) {
                     for (DirectedRelationship rel : sourceRels) {
+                        directedRelationshipIds.add(rel.getID());
                         outgoing.add(serializeRelationship(rel, "outgoing"));
                     }
                 }
@@ -262,11 +348,37 @@ public class ElementQueryHandler implements HttpHandler {
                         element.get_directedRelationshipOfTarget();
                 if (targetRels != null) {
                     for (DirectedRelationship rel : targetRels) {
+                        directedRelationshipIds.add(rel.getID());
                         incoming.add(serializeRelationship(rel, "incoming"));
                     }
                 }
             } catch (Exception e) {
                 LOG.log(Level.FINE, "Error reading incoming relationships", e);
+            }
+
+            try {
+                if (element instanceof ActivityNode) {
+                    ActivityNode node = (ActivityNode) element;
+                    Collection<ActivityEdge> outgoingEdges = node.getOutgoing();
+                    if (outgoingEdges != null) {
+                        for (ActivityEdge edge : outgoingEdges) {
+                            if (edge != null && directedRelationshipIds.add(edge.getID())) {
+                                outgoing.add(serializeActivityEdge(edge, "outgoing"));
+                            }
+                        }
+                    }
+
+                    Collection<ActivityEdge> incomingEdges = node.getIncoming();
+                    if (incomingEdges != null) {
+                        for (ActivityEdge edge : incomingEdges) {
+                            if (edge != null && directedRelationshipIds.add(edge.getID())) {
+                                incoming.add(serializeActivityEdge(edge, "incoming"));
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                LOG.log(Level.FINE, "Error reading activity edges", e);
             }
 
             JsonArray undirected = new JsonArray();
@@ -383,6 +495,35 @@ public class ElementQueryHandler implements HttpHandler {
         if (rel instanceof InformationFlow) {
             appendInformationFlowFields(json, (InformationFlow) rel);
         }
+
+        return json;
+    }
+
+    private JsonObject serializeActivityEdge(ActivityEdge edge, String direction) {
+        JsonObject json = new JsonObject();
+        json.addProperty("relationshipId", edge.getID());
+        json.addProperty("direction", direction);
+
+        try {
+            String shortName = ClassTypes.getShortName(edge.getClassType());
+            json.addProperty("type", shortName != null ? shortName : edge.getHumanType());
+        } catch (Exception e) {
+            json.addProperty("type", edge.getHumanType());
+        }
+        json.addProperty("humanType", edge.getHumanType());
+        appendRelationshipMetadata(json, edge);
+
+        JsonArray sources = new JsonArray();
+        if (edge.getSource() != null) {
+            sources.add(ElementSerializer.toJsonCompact(edge.getSource()));
+        }
+        json.add("sources", sources);
+
+        JsonArray targets = new JsonArray();
+        if (edge.getTarget() != null) {
+            targets.add(ElementSerializer.toJsonCompact(edge.getTarget()));
+        }
+        json.add("targets", targets);
 
         return json;
     }
@@ -532,6 +673,54 @@ public class ElementQueryHandler implements HttpHandler {
         }
         json.add("relatedElements", relatedElements);
         return json;
+    }
+
+    private Stereotype getFlowPropertyStereotype(Property property) {
+        try {
+            Stereotype flowPropertyStereo = StereotypesHelper.getAppliedStereotypeByString(
+                    property,
+                    "FlowProperty");
+            if (flowPropertyStereo == null) {
+                flowPropertyStereo = StereotypesHelper.getAppliedStereotypeByString(
+                        property,
+                        "flowProperty");
+            }
+            return flowPropertyStereo;
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Error reading flow property stereotype", e);
+            return null;
+        }
+    }
+
+    private String readFlowPropertyDirection(Property property, Stereotype flowPropertyStereo) {
+        try {
+            Object direction = StereotypesHelper.getStereotypePropertyFirst(
+                    property,
+                    flowPropertyStereo,
+                    "direction");
+            if (direction == null) {
+                return null;
+            }
+            if (direction instanceof Enum<?>) {
+                return ((Enum<?>) direction).name();
+            }
+            try {
+                Method getName = direction.getClass().getMethod("getName");
+                Object name = getName.invoke(direction);
+                if (name != null) {
+                    String text = String.valueOf(name).trim();
+                    if (!text.isEmpty()) {
+                        return text;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Fall back to String.valueOf below.
+            }
+            return String.valueOf(direction);
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Error reading flow property direction", e);
+            return null;
+        }
     }
 
     private static String normalizeOptional(String value) {

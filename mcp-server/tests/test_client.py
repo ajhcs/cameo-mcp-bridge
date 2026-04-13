@@ -137,7 +137,10 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_add_to_diagram_omits_negative_auto_size_dimensions(self) -> None:
-        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
+        with patch(
+            "cameo_mcp.client.get_element",
+            new=AsyncMock(return_value={"type": "OpaqueAction", "humanType": "Opaque Action"}),
+        ), patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
             await client.add_to_diagram(
                 diagram_id="dia-1",
                 element_id="el-1",
@@ -154,7 +157,10 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_add_to_diagram_keeps_explicit_dimensions(self) -> None:
-        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
+        with patch(
+            "cameo_mcp.client.get_element",
+            new=AsyncMock(return_value={"type": "OpaqueAction", "humanType": "Opaque Action"}),
+        ), patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
             await client.add_to_diagram(
                 diagram_id="dia-1",
                 element_id="el-1",
@@ -176,6 +182,57 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
                 width=-1,
                 height=180,
             )
+
+    async def test_add_to_diagram_uses_macro_fallback_for_activity_partitions(self) -> None:
+        with patch(
+            "cameo_mcp.client.get_element",
+            new=AsyncMock(return_value={"type": "ActivityPartition", "humanType": "Activity Partition"}),
+        ), patch(
+            "cameo_mcp.client._add_activity_partition_to_diagram_via_macro",
+            new=AsyncMock(return_value={"added": True, "presentationId": "pe-partition"}),
+        ) as fallback, patch(
+            "cameo_mcp.client._request",
+            new=AsyncMock(return_value={"added": True}),
+        ) as request:
+            result = await client.add_to_diagram(
+                diagram_id="dia-1",
+                element_id="partition-1",
+                x=80,
+                y=120,
+                width=220,
+                height=320,
+            )
+
+        self.assertEqual("pe-partition", result["presentationId"])
+        fallback.assert_awaited_once_with(
+            "dia-1",
+            "partition-1",
+            x=80,
+            y=120,
+            width=220,
+            height=320,
+        )
+        request.assert_not_awaited()
+
+    async def test_add_to_diagram_keeps_rest_path_for_non_partition_elements(self) -> None:
+        with patch(
+            "cameo_mcp.client.get_element",
+            new=AsyncMock(return_value={"type": "OpaqueAction", "humanType": "Opaque Action"}),
+        ), patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
+            await client.add_to_diagram(
+                diagram_id="dia-1",
+                element_id="el-1",
+                x=120,
+                y=220,
+                width=140,
+                height=48,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual(
+            {"elementId": "el-1", "x": 120, "y": 220, "width": 140, "height": 48},
+            request.await_args.kwargs["json_body"],
+        )
 
     async def test_create_relationship_omits_optional_connector_fields_when_absent(self) -> None:
         with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
@@ -239,6 +296,16 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
                 "itemPropertyId": "flow-prop-1",
             },
             request.await_args.kwargs["json_body"],
+        )
+
+    async def test_get_interface_flow_properties_uses_native_endpoint(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"flowProperties": []})) as request:
+            await client.get_interface_flow_properties(["if-1", "if-2"])
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/elements/interface-flow-properties",
+            json_body={"interfaceIds": ["if-1", "if-2"]},
         )
 
     async def test_list_matrices_passes_filters(self) -> None:

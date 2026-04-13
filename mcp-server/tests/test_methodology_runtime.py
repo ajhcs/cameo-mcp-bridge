@@ -3,6 +3,7 @@ import unittest
 from cameo_mcp.methodology.runtime import (
     ArtifactRequirement,
     ArtifactSnapshot,
+    ConformanceFinding,
     EvidenceBundle,
     PackDefinition,
     RecipeDefinition,
@@ -11,8 +12,11 @@ from cameo_mcp.methodology.runtime import (
     build_evidence_bundle,
     build_recipe_execution_plan,
     build_workflow_guidance,
+    extend_conformance_report,
     execute_recipe,
     run_conformance_checks,
+    semantic_validation_findings,
+    _result_primary_id,
 )
 
 
@@ -170,7 +174,11 @@ class FakeBridge:
     async def add_to_diagram(self, **kwargs):
         self.calls.append(("add_to_diagram", dict(kwargs)))
         self.counter += 1
-        return {"presentationId": f"pe-{self.counter}"}
+        return {"presentationId": f"pe-{self.counter}", "diagramId": kwargs.get("diagram_id")}
+
+    async def set_specification(self, **kwargs):
+        self.calls.append(("set_specification", dict(kwargs)))
+        return {"updated": True}
 
 
 class MethodologyRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -225,6 +233,81 @@ class MethodologyRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(call[0] == "create_relationship" for call in bridge.calls))
         self.assertTrue(any(call[0] == "add_to_diagram" for call in bridge.calls))
 
+    def test_result_primary_id_prefers_presentation_id_for_diagram_adds(self) -> None:
+        self.assertEqual(
+            "pe-42",
+            _result_primary_id({"presentationId": "pe-42", "diagramId": "dia-9"}),
+        )
+
+    def test_result_primary_id_prefers_nested_path_presentation_id_over_diagram_id(self) -> None:
+        self.assertEqual(
+            "path-7",
+            _result_primary_id(
+                {
+                    "diagramId": "dia-9",
+                    "results": [{"presentationId": "path-7", "created": True}],
+                }
+            ),
+        )
+
+    async def test_execute_recipe_records_resolved_specification_properties(self) -> None:
+        recipe = RecipeDefinition(
+            recipe_id="oosem.port_spec",
+            name="Port Spec",
+            phase="architecture",
+            description="Exercise resolved specification values.",
+            required_artifacts=(
+                ArtifactRequirement(key="workspace", kind="Package"),
+            ),
+            required_relationships=(),
+            operations=(
+                RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key="interface_block",
+                    parameters={
+                        "type": "InterfaceBlock",
+                        "name": "Port Type",
+                        "parent_id": {"ref": "workspace"},
+                    },
+                ),
+                RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key="system_port",
+                    parameters={
+                        "type": "Port",
+                        "name": "system_port",
+                        "parent_id": {"ref": "workspace"},
+                    },
+                ),
+                RecipeOperationDefinition(
+                    kind="set_specification",
+                    artifact_key="system_port",
+                    parameters={
+                        "element_id": {"ref": "system_port"},
+                        "properties": {"type": {"id": {"ref": "interface_block"}}},
+                    },
+                ),
+            ),
+            review_checklist=(),
+            evidence_sections=(),
+            layout_recipe=None,
+        )
+        pack = PackDefinition(
+            pack_id="oosem",
+            name="OOSEM",
+            description="Test pack",
+            phases=("architecture",),
+            recipes=(recipe,),
+        )
+        plan = build_recipe_execution_plan(pack, recipe.recipe_id, [self.workspace])
+
+        result = await execute_recipe(plan, FakeBridge())
+
+        self.assertEqual(
+            {"type": {"id": "el-1"}},
+            result.updated_artifacts[0].properties,
+        )
+
     def test_conformance_and_evidence_bundle_are_compact_and_useful(self) -> None:
         current_artifacts = [
             ArtifactSnapshot(
@@ -273,6 +356,33 @@ class MethodologyRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("oosem", bundle.pack_id)
         self.assertIn("stakeholder_actor", bundle.artifact_keys)
         self.assertIn("conformance", bundle.to_dict())
+
+    def test_semantic_findings_extend_conformance_report(self) -> None:
+        base = run_conformance_checks(self.recipe, [self.workspace], pack_id=self.pack.pack_id)
+        semantic_findings = semantic_validation_findings(
+            [
+                {
+                    "validatorId": "requirement_quality",
+                    "ok": False,
+                    "checks": [
+                        {
+                            "name": "requirement-text-present",
+                            "ok": False,
+                            "details": {"blankTextIds": ["req-1"]},
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(1, len(semantic_findings))
+        self.assertIsInstance(semantic_findings[0], ConformanceFinding)
+
+        merged = extend_conformance_report(base, semantic_findings)
+
+        self.assertFalse(merged.passed)
+        self.assertGreater(len(merged.findings), len(base.findings))
+        self.assertTrue(any(f.rule_id.startswith("semantic:requirement_quality") for f in merged.findings))
 
     def _fake_execution_result(self):
         from cameo_mcp.methodology.runtime import OperationReceipt, RecipeExecutionResult

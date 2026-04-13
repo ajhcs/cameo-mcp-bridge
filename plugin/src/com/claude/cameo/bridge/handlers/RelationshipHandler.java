@@ -5,6 +5,7 @@ import com.claude.cameo.bridge.util.EdtDispatcher;
 import com.claude.cameo.bridge.util.ElementSerializer;
 import com.claude.cameo.bridge.util.JsonHelper;
 import com.nomagic.magicdraw.openapi.uml.ModelElementsManager;
+import com.nomagic.uml2.ext.magicdraw.activities.mdfundamentalactivities.Activity;
 import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ActivityEdge;
 import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ControlFlow;
 import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ObjectFlow;
@@ -133,11 +134,11 @@ public class RelationshipHandler implements HttpHandler {
                     break;
                 case "control-flow":
                 case "controlflow":
-                    relationship = createControlFlow(ef, project, source, target, guard);
+                    relationship = createControlFlow(ef, project, source, target, guard, ownerId);
                     break;
                 case "object-flow":
                 case "objectflow":
-                    relationship = createObjectFlow(ef, project, source, target, guard);
+                    relationship = createObjectFlow(ef, project, source, target, guard, ownerId);
                     break;
                 case "allocate":
                     relationship = createStereotypedAbstraction(
@@ -299,32 +300,30 @@ public class RelationshipHandler implements HttpHandler {
 
     private ControlFlow createControlFlow(ElementsFactory ef,
             com.nomagic.magicdraw.core.Project project,
-            Element source, Element target, String guard) throws Exception {
+            Element source, Element target, String guard, String ownerId) throws Exception {
         if (!(source instanceof ActivityNode) || !(target instanceof ActivityNode)) {
             throw new IllegalArgumentException("ControlFlow requires ActivityNode source and target");
         }
         ControlFlow flow = ef.createControlFlowInstance();
+        attachActivityEdge(flow, project, source, ownerId);
         flow.setSource((ActivityNode) source);
         flow.setTarget((ActivityNode) target);
         if (guard != null && !guard.isEmpty()) {
             LiteralString guardSpec = ef.createLiteralStringInstance();
             guardSpec.setValue(guard);
             flow.setGuard(guardSpec);
-        }
-        Element owner = source.getOwner();
-        if (owner != null) {
-            ModelElementsManager.getInstance().addElement(flow, owner);
         }
         return flow;
     }
 
     private ObjectFlow createObjectFlow(ElementsFactory ef,
             com.nomagic.magicdraw.core.Project project,
-            Element source, Element target, String guard) throws Exception {
+            Element source, Element target, String guard, String ownerId) throws Exception {
         if (!(source instanceof ActivityNode) || !(target instanceof ActivityNode)) {
             throw new IllegalArgumentException("ObjectFlow requires ActivityNode source and target");
         }
         ObjectFlow flow = ef.createObjectFlowInstance();
+        attachActivityEdge(flow, project, source, ownerId);
         flow.setSource((ActivityNode) source);
         flow.setTarget((ActivityNode) target);
         if (guard != null && !guard.isEmpty()) {
@@ -332,11 +331,27 @@ public class RelationshipHandler implements HttpHandler {
             guardSpec.setValue(guard);
             flow.setGuard(guardSpec);
         }
-        Element owner = source.getOwner();
-        if (owner != null) {
-            ModelElementsManager.getInstance().addElement(flow, owner);
-        }
         return flow;
+    }
+
+    private void attachActivityEdge(ActivityEdge edge,
+            com.nomagic.magicdraw.core.Project project,
+            Element source,
+            String ownerId) throws Exception {
+        Element owner = null;
+        if (ownerId != null && !ownerId.isEmpty()) {
+            owner = (Element) project.getElementByID(ownerId);
+        }
+        if (owner == null) {
+            owner = source.getOwner();
+        }
+        if (owner instanceof Activity) {
+            ((Activity) owner).getEdge().add(edge);
+            return;
+        }
+        if (owner != null) {
+            ModelElementsManager.getInstance().addElement(edge, owner);
+        }
     }
 
     private Transition createTransition(ElementsFactory ef,

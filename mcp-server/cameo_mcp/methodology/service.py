@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Sequence
 
 from cameo_mcp import client as default_bridge_client
+from cameo_mcp.semantic_validation import (
+    verify_activity_flow_semantics_for_diagram,
+    verify_cross_diagram_traceability as run_cross_diagram_traceability,
+    verify_port_boundary_consistency_for_interfaces,
+    verify_requirement_quality_for_ids,
+)
 
 from . import registry, runtime
 
@@ -86,6 +93,15 @@ async def execute_methodology_recipe(
         current_artifacts,
         pack_id=runtime_pack.pack_id,
     )
+    semantic_validations = await _run_semantic_validations(
+        runtime_recipe,
+        current_artifacts,
+        bridge=bridge,
+    )
+    conformance = runtime.extend_conformance_report(
+        conformance,
+        runtime.semantic_validation_findings(semantic_validations),
+    )
     after_diagram_ids = _diagram_ids_for_evidence(result.artifact_bindings)
     bridge_evidence = await _build_bridge_evidence(
         current_artifacts,
@@ -93,6 +109,7 @@ async def execute_methodology_recipe(
         before_diagram_ids=before_diagram_ids,
         before_snapshots=before_snapshots,
         after_diagram_ids=after_diagram_ids,
+        semantic_validations=semantic_validations,
         bridge=bridge,
     )
     bundle = runtime.build_evidence_bundle(
@@ -112,6 +129,7 @@ async def execute_methodology_recipe(
         "executionPlan": plan.to_dict(),
         "executionResult": result.to_dict(),
         "conformance": conformance.to_dict(),
+        "semanticValidations": semantic_validations,
         "evidenceBundle": bundle.to_dict(),
         "reviewPacketMarkdown": _render_review_packet(pack, bundle),
     }
@@ -148,11 +166,21 @@ async def validate_methodology_recipe(
         artifacts,
         pack_id=runtime_pack.pack_id,
     )
+    semantic_validations = await _run_semantic_validations(
+        runtime_recipe,
+        artifacts,
+        bridge=bridge,
+    )
+    conformance = runtime.extend_conformance_report(
+        conformance,
+        runtime.semantic_validation_findings(semantic_validations),
+    )
     return {
         "pack": pack.to_dict(),
         "recipe": _registry_recipe_dict(pack_id, recipe_id),
         "workflowGuidance": guidance.to_dict(),
         "conformance": conformance.to_dict(),
+        "semanticValidations": semantic_validations,
     }
 
 
@@ -201,6 +229,15 @@ async def generate_review_packet(
         artifacts,
         pack_id=runtime_pack.pack_id,
     )
+    semantic_validations = await _run_semantic_validations(
+        runtime_recipe,
+        artifacts,
+        bridge=bridge,
+    )
+    conformance = runtime.extend_conformance_report(
+        conformance,
+        runtime.semantic_validation_findings(semantic_validations),
+    )
     bridge_evidence = await _build_bridge_evidence(
         artifacts,
         empty_result,
@@ -210,6 +247,7 @@ async def generate_review_packet(
             bridge,
         ),
         after_diagram_ids=_diagram_ids_for_evidence(plan.artifact_bindings),
+        semantic_validations=semantic_validations,
         bridge=bridge,
     )
     bundle = runtime.build_evidence_bundle(
@@ -226,6 +264,7 @@ async def generate_review_packet(
     return {
         "pack": pack.to_dict(),
         "recipe": _registry_recipe_dict(pack_id, recipe_id),
+        "semanticValidations": semantic_validations,
         "evidenceBundle": bundle.to_dict(),
         "reviewPacketMarkdown": _render_review_packet(pack, bundle),
     }
@@ -314,6 +353,19 @@ def _reference_artifacts(
                 start=1,
             )
         ]
+    if recipe_id == "requirements_to_architecture_allocation":
+        return [
+            runtime.ArtifactSnapshot(
+                key=f"requirement_ref_{index}",
+                kind="Requirement",
+                name=requirement_id,
+                element_id=requirement_id,
+            )
+            for index, requirement_id in enumerate(
+                _string_list(recipe_parameters.get("requirement_ids")),
+                start=1,
+            )
+        ]
     return []
 
 
@@ -381,6 +433,44 @@ def _merge_current_artifacts(
                 relationships=artifact.relationships + tuple(relationships),
             )
 
+    for artifact in result.created_artifacts:
+        existing = artifact_index.get(artifact.key)
+        artifact_index[artifact.key] = runtime.ArtifactSnapshot(
+            key=artifact.key,
+            kind=artifact.kind,
+            name=artifact.name,
+            element_id=artifact.element_id or (existing.element_id if existing is not None else None),
+            parent_key=existing.parent_key if existing is not None else artifact.parent_key,
+            stereotypes=existing.stereotypes if existing is not None and existing.stereotypes else artifact.stereotypes,
+            properties=existing.properties if existing is not None else artifact.properties,
+            relationships=existing.relationships if existing is not None else artifact.relationships,
+        )
+
+    for artifact in result.updated_artifacts:
+        existing = artifact_index.get(artifact.key)
+        if existing is None:
+            artifact_index[artifact.key] = runtime.ArtifactSnapshot(
+                key=artifact.key,
+                kind=artifact.kind,
+                name=artifact.name,
+                element_id=artifact.element_id,
+                parent_key=artifact.parent_key,
+                stereotypes=artifact.stereotypes,
+                properties=dict(artifact.properties),
+                relationships=artifact.relationships,
+            )
+            continue
+        artifact_index[artifact.key] = runtime.ArtifactSnapshot(
+            key=existing.key,
+            kind=existing.kind,
+            name=existing.name,
+            element_id=existing.element_id or artifact.element_id,
+            parent_key=existing.parent_key,
+            stereotypes=existing.stereotypes,
+            properties={**existing.properties, **artifact.properties},
+            relationships=existing.relationships,
+        )
+
     return list(artifact_index.values())
 
 
@@ -437,6 +527,9 @@ def _build_runtime_recipe(
         "use_case_subject_containment": _build_use_case_subject_containment_recipe,
         "system_requirements_package": _build_system_requirements_recipe,
         "logical_architecture_scaffold": _build_architecture_recipe,
+        "logical_activity_flow": _build_logical_activity_flow_recipe,
+        "logical_port_bdd": _build_logical_port_bdd_recipe,
+        "logical_ibd_traceability": _build_logical_ibd_traceability_recipe,
         "requirements_to_architecture_allocation": _build_requirements_to_architecture_recipe,
         "verification_evidence_scaffold": _build_verification_recipe,
         "uaf_operational_activity_starter": _build_uaf_operational_activity_recipe,
@@ -888,8 +981,10 @@ def _build_system_requirements_recipe(
         ),
     ]
     relationship_requirements: list[runtime.RelationshipRequirement] = []
+    requirement_keys: list[str] = []
     for index, requirement_id in enumerate(_coalesce_requirement_ids(requirement_ids, requirement_texts), start=1):
         key = f"requirement_{index}"
+        requirement_keys.append(key)
         requirement_text = requirement_texts[index - 1] if index - 1 < len(requirement_texts) else requirement_id
         required_artifacts.append(
             runtime.ArtifactRequirement(
@@ -943,6 +1038,19 @@ def _build_system_requirements_recipe(
                     },
                 )
             )
+    semantic_validations = ()
+    if requirement_keys:
+        semantic_validations = (
+            runtime.SemanticValidationDefinition(
+                validator_id="requirement_quality",
+                parameters={
+                    "requirement_ids": [{"ref": key} for key in requirement_keys],
+                    "require_id": True,
+                    "require_measurement": True,
+                    "min_text_length": 20,
+                },
+            ),
+        )
     return runtime.RecipeDefinition(
         recipe_id=recipe.id,
         name=recipe.title,
@@ -955,6 +1063,7 @@ def _build_system_requirements_recipe(
         evidence_sections=tuple(recipe.evidence_sections),
         layout_recipe=recipe.layout_profile,
         required_profiles=tuple(),
+        semantic_validations=semantic_validations,
     )
 
 
@@ -1063,6 +1172,836 @@ def _build_architecture_recipe(
     )
 
 
+def _build_logical_activity_flow_recipe(
+    pack_id: str,
+    recipe: registry.ArtifactRecipe,
+    params: Mapping[str, Any],
+) -> runtime.RecipeDefinition:
+    activity_name = str(params["activity_name"])
+    package_name = f"{activity_name} Activity"
+    performer_names = _string_list(params.get("performer_names")) or [f"{activity_name} Performer"]
+    action_names = _string_list(params.get("action_names")) or [
+        f"Capture {activity_name} Request",
+        f"Perform {activity_name}",
+        f"Confirm {activity_name} Outcome",
+    ]
+
+    required_artifacts: list[runtime.ArtifactRequirement] = [
+        runtime.ArtifactRequirement(key="workspace", kind="Package"),
+        runtime.ArtifactRequirement(
+            key="logical_activity_package",
+            kind="Package",
+            name=package_name,
+            parent_key="workspace",
+        ),
+        runtime.ArtifactRequirement(
+            key="logical_activity",
+            kind="Activity",
+            name=activity_name,
+            parent_key="logical_activity_package",
+        ),
+        runtime.ArtifactRequirement(
+            key="logical_activity_diagram",
+            kind="Activity Diagram",
+            name=package_name,
+            parent_key="logical_activity",
+        ),
+    ]
+    operations: list[runtime.RecipeOperationDefinition] = [
+        runtime.RecipeOperationDefinition(
+            kind="create_element",
+            artifact_key="logical_activity_package",
+            parameters={
+                "type": "Package",
+                "name": package_name,
+                "parent_id": {"ref": "workspace"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="create_element",
+            artifact_key="logical_activity",
+            parameters={
+                "type": "Activity",
+                "name": activity_name,
+                "parent_id": {"ref": "logical_activity_package"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="create_diagram",
+            artifact_key="logical_activity_diagram",
+            parameters={
+                "type": "Activity Diagram",
+                "name": package_name,
+                "parent_id": {"ref": "logical_activity"},
+            },
+        ),
+    ]
+
+    lane_height = max(240, 140 + (len(action_names) * 90))
+    performer_count = max(len(performer_names), 1)
+    lane_width = 220
+    action_shape_keys: list[str] = []
+    partition_visual_operations: list[runtime.RecipeOperationDefinition] = []
+
+    for index, performer_name in enumerate(performer_names, start=1):
+        performer_key = f"performer_{index}"
+        partition_key = f"partition_{index}"
+        partition_shape_key = f"{partition_key}_shape"
+        lane_x = 80 + ((index - 1) * lane_width)
+
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=performer_key,
+                    parameters={
+                        "type": "Block",
+                        "name": performer_name,
+                        "parent_id": {"ref": "logical_activity_package"},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=partition_key,
+                    parameters={
+                        "type": "ActivityPartition",
+                        "name": performer_name,
+                        "parent_id": {"ref": "logical_activity"},
+                        "represents_id": {"ref": performer_key},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key=partition_shape_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_activity_diagram"},
+                        "element_id": {"ref": partition_key},
+                        "x": lane_x,
+                        "y": 80,
+                        "width": lane_width,
+                        "height": lane_height,
+                    },
+                ),
+            ],
+        )
+        partition_visual_operations.append(operations.pop())
+
+    operations.extend(partition_visual_operations)
+
+    operations.extend(
+        [
+            runtime.RecipeOperationDefinition(
+                kind="create_element",
+                artifact_key="initial_node",
+                parameters={
+                    "type": "InitialNode",
+                    "name": "Start",
+                    "parent_id": {"ref": "logical_activity"},
+                },
+            ),
+            runtime.RecipeOperationDefinition(
+                kind="create_element",
+                artifact_key="activity_final",
+                parameters={
+                    "type": "ActivityFinalNode",
+                    "name": "Done",
+                    "parent_id": {"ref": "logical_activity"},
+                },
+            ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key="initial_node_shape",
+                    parameters={
+                        "diagram_id": {"ref": "logical_activity_diagram"},
+                        "element_id": {"ref": "initial_node"},
+                        "x": 104,
+                        "y": 112,
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key="activity_final_shape",
+                    parameters={
+                        "diagram_id": {"ref": "logical_activity_diagram"},
+                        "element_id": {"ref": "activity_final"},
+                        "x": 80 + ((performer_count - 1) * lane_width) + 150,
+                        "y": 124 + ((max(len(action_names), 1) - 1) * 80),
+                    },
+                ),
+            ]
+    )
+
+    for index, action_name in enumerate(action_names, start=1):
+        action_key = f"action_{index}"
+        action_shape_key = f"{action_key}_shape"
+        action_shape_keys.append(action_shape_key)
+        lane_index = (index - 1) % performer_count
+        row_index = (index - 1) // performer_count
+        lane_x = 80 + (lane_index * lane_width)
+
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=action_key,
+                    parameters={
+                        "type": "OpaqueAction",
+                        "name": action_name,
+                        "parent_id": {"ref": "logical_activity"},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key=action_shape_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_activity_diagram"},
+                        "element_id": {"ref": action_key},
+                        "x": lane_x + 56,
+                        "y": 164 + (row_index * 90),
+                        "width": 140,
+                        "height": 48,
+                    },
+                ),
+            ]
+        )
+
+    flow_source_keys = ["initial_node"] + [f"action_{index}" for index in range(1, len(action_names) + 1)]
+    flow_target_keys = [f"action_{index}" for index in range(1, len(action_names) + 1)] + ["activity_final"]
+    flow_source_shape_keys = ["initial_node_shape"] + action_shape_keys
+    flow_target_shape_keys = action_shape_keys + ["activity_final_shape"]
+
+    for index, (source_key, target_key, source_shape_key, target_shape_key) in enumerate(
+        zip(flow_source_keys, flow_target_keys, flow_source_shape_keys, flow_target_shape_keys),
+        start=1,
+    ):
+        flow_key = f"control_flow_{index}"
+        path_key = f"{flow_key}_path"
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="create_relationship",
+                    artifact_key=flow_key,
+                    parameters={
+                        "type": "ControlFlow",
+                        "source_id": {"ref": source_key},
+                        "target_id": {"ref": target_key},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_diagram_paths",
+                    artifact_key=path_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_activity_diagram"},
+                        "paths": [
+                            {
+                                "relationshipId": {"ref": flow_key},
+                                "sourceShapeId": {"ref": source_shape_key},
+                                "targetShapeId": {"ref": target_shape_key},
+                            }
+                        ],
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="route_paths",
+                    parameters={
+                        "diagram_id": {"ref": "logical_activity_diagram"},
+                        "routes": [
+                            {
+                                "presentationId": {"ref": path_key},
+                                "resetLabels": True,
+                            }
+                        ],
+                    },
+                ),
+            ]
+        )
+
+    return runtime.RecipeDefinition(
+        recipe_id=recipe.id,
+        name=recipe.title,
+        phase=recipe.phase_id,
+        description=recipe.goal,
+        required_artifacts=tuple(required_artifacts),
+        required_relationships=(),
+        operations=tuple(operations),
+        review_checklist=tuple(recipe.review_sections),
+        evidence_sections=tuple(recipe.evidence_sections),
+        layout_recipe=recipe.layout_profile,
+        required_profiles=tuple(),
+        semantic_validations=(
+            runtime.SemanticValidationDefinition(
+                validator_id="activity_flow_semantics",
+                parameters={
+                    "diagram_id": {"ref": "logical_activity_diagram"},
+                    "max_partition_depth": 1,
+                    "allow_stereotype_partition_labels": False,
+                },
+            ),
+        ),
+    )
+
+
+def _build_logical_port_bdd_recipe(
+    pack_id: str,
+    recipe: registry.ArtifactRecipe,
+    params: Mapping[str, Any],
+) -> runtime.RecipeDefinition:
+    system_name = str(params["system_name"])
+    package_name = f"{system_name} Ports"
+    interface_definitions = _interface_definitions(params.get("interface_definitions")) or [
+        {
+            "name": f"{system_name} Port Type",
+            "port_name": _default_port_name(system_name),
+            "flow_properties": [
+                {"name": "Request", "direction": "in"},
+                {"name": "Response", "direction": "out"},
+            ],
+        }
+    ]
+
+    required_artifacts: list[runtime.ArtifactRequirement] = [
+        runtime.ArtifactRequirement(key="workspace", kind="Package"),
+        runtime.ArtifactRequirement(
+            key="logical_port_package",
+            kind="Package",
+            name=package_name,
+            parent_key="workspace",
+        ),
+        runtime.ArtifactRequirement(
+            key="logical_port_system",
+            kind="Block",
+            name=system_name,
+            parent_key="logical_port_package",
+        ),
+        runtime.ArtifactRequirement(
+            key="logical_port_bdd",
+            kind="SysML Block Definition Diagram",
+            name=package_name,
+            parent_key="logical_port_package",
+        ),
+    ]
+    operations: list[runtime.RecipeOperationDefinition] = [
+        runtime.RecipeOperationDefinition(
+            kind="create_element",
+            artifact_key="logical_port_package",
+            parameters={
+                "type": "Package",
+                "name": package_name,
+                "parent_id": {"ref": "workspace"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="create_element",
+            artifact_key="logical_port_system",
+            parameters={
+                "type": "Block",
+                "name": system_name,
+                "parent_id": {"ref": "logical_port_package"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="create_diagram",
+            artifact_key="logical_port_bdd",
+            parameters={
+                "type": "SysML Block Definition Diagram",
+                "name": package_name,
+                "parent_id": {"ref": "logical_port_package"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="add_to_diagram",
+            artifact_key="logical_port_system_shape",
+            parameters={
+                "diagram_id": {"ref": "logical_port_bdd"},
+                "element_id": {"ref": "logical_port_system"},
+                "x": 360,
+                "y": 140,
+                "width": 320,
+                "height": max(220, 120 + (len(interface_definitions) * 80)),
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="set_shape_compartments",
+            parameters={
+                "diagram_id": {"ref": "logical_port_bdd"},
+                "presentation_id": {"ref": "logical_port_system_shape"},
+                "compartments": {
+                    "properties": True,
+                    "ports": True,
+                    "operations": False,
+                    "attributes": False,
+                    "stereotype": False,
+                },
+            },
+        ),
+    ]
+
+    interface_keys: list[str] = []
+    for index, interface_definition in enumerate(interface_definitions, start=1):
+        interface_key = f"interface_block_{index}"
+        interface_shape_key = f"{interface_key}_shape"
+        interface_keys.append(interface_key)
+        x_position = 100 if index % 2 else 760
+        y_position = 100 + ((index - 1) * 140)
+
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=interface_key,
+                    parameters={
+                        "type": "InterfaceBlock",
+                        "name": interface_definition["name"],
+                        "parent_id": {"ref": "logical_port_package"},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key=interface_shape_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_port_bdd"},
+                        "element_id": {"ref": interface_key},
+                        "x": x_position,
+                        "y": y_position,
+                        "width": 220,
+                        "height": max(120, 70 + (len(interface_definition["flow_properties"]) * 26)),
+                    },
+                ),
+            ]
+        )
+
+        for flow_index, flow_property in enumerate(interface_definition["flow_properties"], start=1):
+            flow_property_key = f"{interface_key}_flow_property_{flow_index}"
+            operations.extend(
+                [
+                    runtime.RecipeOperationDefinition(
+                        kind="create_element",
+                        artifact_key=flow_property_key,
+                        parameters={
+                            "type": "FlowProperty",
+                            "name": flow_property["name"],
+                            "parent_id": {"ref": interface_key},
+                        },
+                    ),
+                    runtime.RecipeOperationDefinition(
+                        kind="set_specification",
+                        artifact_key=flow_property_key,
+                        parameters={
+                            "element_id": {"ref": flow_property_key},
+                            "properties": {"direction": flow_property["direction"]},
+                        },
+                    ),
+                ]
+            )
+
+        port_key = f"system_port_{index}"
+        port_shape_key = f"{port_key}_shape"
+        port_y = 36 + ((index - 1) * 52)
+        port_x = 12 if index % 2 else 272
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=port_key,
+                    parameters={
+                        "type": "Port",
+                        "name": interface_definition["port_name"],
+                        "parent_id": {"ref": "logical_port_system"},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="set_specification",
+                    artifact_key=port_key,
+                    parameters={
+                        "element_id": {"ref": port_key},
+                        "properties": {"type": {"id": {"ref": interface_key}}},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key=port_shape_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_port_bdd"},
+                        "element_id": {"ref": port_key},
+                        "container_presentation_id": {"ref": "logical_port_system_shape"},
+                        "x": port_x,
+                        "y": port_y,
+                        "width": 28,
+                        "height": 18,
+                    },
+                ),
+            ]
+        )
+
+    return runtime.RecipeDefinition(
+        recipe_id=recipe.id,
+        name=recipe.title,
+        phase=recipe.phase_id,
+        description=recipe.goal,
+        required_artifacts=tuple(required_artifacts),
+        required_relationships=(),
+        operations=tuple(operations),
+        review_checklist=tuple(recipe.review_sections),
+        evidence_sections=tuple(recipe.evidence_sections),
+        layout_recipe=recipe.layout_profile,
+        required_profiles=tuple(),
+        semantic_validations=(
+            runtime.SemanticValidationDefinition(
+                validator_id="port_boundary_consistency",
+                parameters={
+                    "interface_block_ids": [{"ref": key} for key in interface_keys],
+                },
+            ),
+        ),
+    )
+
+
+def _build_logical_ibd_traceability_recipe(
+    pack_id: str,
+    recipe: registry.ArtifactRecipe,
+    params: Mapping[str, Any],
+) -> runtime.RecipeDefinition:
+    context_name = str(params["context_name"])
+    package_name = f"{context_name} Context"
+    activity_diagram_id = _optional_str(params.get("activity_diagram_id"))
+    interface_block_ids = [str(item) for item in params.get("interface_block_ids") or () if str(item)]
+    part_names = _string_list(params.get("part_names"))
+    flow_names = _string_list(params.get("flow_names"))
+
+    if not part_names:
+        part_names = [f"{context_name} External System"] if not flow_names else [
+            f"{context_name} External System {index}" for index in range(1, len(flow_names) + 1)
+        ]
+    if not flow_names:
+        flow_names = [f"{part_name} Exchange" for part_name in part_names]
+
+    required_artifacts: list[runtime.ArtifactRequirement] = [
+        runtime.ArtifactRequirement(key="workspace", kind="Package"),
+        runtime.ArtifactRequirement(
+            key="logical_context_package",
+            kind="Package",
+            name=package_name,
+            parent_key="workspace",
+        ),
+        runtime.ArtifactRequirement(
+            key="logical_context_block",
+            kind="Block",
+            name=context_name,
+            parent_key="logical_context_package",
+        ),
+        runtime.ArtifactRequirement(
+            key="logical_context_ibd",
+            kind="SysML Internal Block Diagram",
+            name=package_name,
+            parent_key="logical_context_block",
+        ),
+    ]
+    operations: list[runtime.RecipeOperationDefinition] = [
+        runtime.RecipeOperationDefinition(
+            kind="create_element",
+            artifact_key="logical_context_package",
+            parameters={
+                "type": "Package",
+                "name": package_name,
+                "parent_id": {"ref": "workspace"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="create_element",
+            artifact_key="logical_context_block",
+            parameters={
+                "type": "Block",
+                "name": context_name,
+                "parent_id": {"ref": "logical_context_package"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="create_diagram",
+            artifact_key="logical_context_ibd",
+            parameters={
+                "type": "SysML Internal Block Diagram",
+                "name": package_name,
+                "parent_id": {"ref": "logical_context_block"},
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="add_to_diagram",
+            artifact_key="logical_context_shape",
+            parameters={
+                "diagram_id": {"ref": "logical_context_ibd"},
+                "element_id": {"ref": "logical_context_block"},
+                "x": 300,
+                "y": 120,
+                "width": 420,
+                "height": max(260, 150 + (len(part_names) * 90)),
+            },
+        ),
+        runtime.RecipeOperationDefinition(
+            kind="set_shape_compartments",
+            parameters={
+                "diagram_id": {"ref": "logical_context_ibd"},
+                "presentation_id": {"ref": "logical_context_shape"},
+                "compartments": {
+                    "properties": True,
+                    "ports": True,
+                    "operations": False,
+                    "attributes": False,
+                    "stereotype": False,
+                },
+            },
+        ),
+    ]
+
+    connector_refs: list[tuple[str, str, str, str]] = []
+    part_count = max(len(part_names), 1)
+    for index, part_name in enumerate(part_names, start=1):
+        external_block_key = f"external_block_{index}"
+        part_key = f"context_part_{index}"
+        part_shape_key = f"{part_key}_shape"
+        context_port_key = f"context_port_{index}"
+        external_port_key = f"external_port_{index}"
+        context_port_shape_key = f"{context_port_key}_shape"
+        external_port_shape_key = f"{external_port_key}_shape"
+        connector_key = f"context_connector_{index}"
+        interface_block_id = interface_block_ids[(index - 1) % len(interface_block_ids)] if interface_block_ids else None
+
+        part_y = 30 + ((index - 1) * 76)
+        context_port_y = 40 + ((index - 1) * 60)
+        context_port_x = 360
+        external_port_x = 150
+
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=external_block_key,
+                    parameters={
+                        "type": "Block",
+                        "name": part_name,
+                        "parent_id": {"ref": "logical_context_package"},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=part_key,
+                    parameters={
+                        "type": "Property",
+                        "name": part_name,
+                        "parent_id": {"ref": "logical_context_block"},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="set_specification",
+                    artifact_key=part_key,
+                    parameters={
+                        "element_id": {"ref": part_key},
+                        "properties": {"type": {"id": {"ref": external_block_key}}},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key=part_shape_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_context_ibd"},
+                        "element_id": {"ref": part_key},
+                        "container_presentation_id": {"ref": "logical_context_shape"},
+                        "x": 24,
+                        "y": part_y,
+                        "width": 180,
+                        "height": 56,
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=context_port_key,
+                    parameters={
+                        "type": "Port",
+                        "name": f"{_default_port_name(part_name)}_context",
+                        "parent_id": {"ref": "logical_context_block"},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="create_element",
+                    artifact_key=external_port_key,
+                    parameters={
+                        "type": "Port",
+                        "name": _default_port_name(part_name),
+                        "parent_id": {"ref": external_block_key},
+                    },
+                ),
+            ]
+        )
+
+        if interface_block_id is not None:
+            operations.extend(
+                [
+                    runtime.RecipeOperationDefinition(
+                        kind="set_specification",
+                        artifact_key=context_port_key,
+                        parameters={
+                            "element_id": {"ref": context_port_key},
+                            "properties": {"type": {"id": interface_block_id}},
+                        },
+                    ),
+                    runtime.RecipeOperationDefinition(
+                        kind="set_specification",
+                        artifact_key=external_port_key,
+                        parameters={
+                            "element_id": {"ref": external_port_key},
+                            "properties": {"type": {"id": interface_block_id}},
+                        },
+                    ),
+                ]
+            )
+
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key=context_port_shape_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_context_ibd"},
+                        "element_id": {"ref": context_port_key},
+                        "container_presentation_id": {"ref": "logical_context_shape"},
+                        "x": context_port_x,
+                        "y": context_port_y,
+                        "width": 28,
+                        "height": 18,
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_to_diagram",
+                    artifact_key=external_port_shape_key,
+                    parameters={
+                        "diagram_id": {"ref": "logical_context_ibd"},
+                        "element_id": {"ref": external_port_key},
+                        "container_presentation_id": {"ref": part_shape_key},
+                        "x": external_port_x,
+                        "y": 18,
+                        "width": 28,
+                        "height": 18,
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="create_relationship",
+                    artifact_key=connector_key,
+                    parameters={
+                        "type": "Connector",
+                        "name": f"{part_name} Connector",
+                        "source_id": {"ref": context_port_key},
+                        "target_id": {"ref": external_port_key},
+                        "owner_id": {"ref": "logical_context_block"},
+                        "target_part_with_port_id": {"ref": part_key},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_diagram_paths",
+                    artifact_key=f"{connector_key}_path",
+                    parameters={
+                        "diagram_id": {"ref": "logical_context_ibd"},
+                        "paths": [
+                            {
+                                "relationshipId": {"ref": connector_key},
+                                "sourceShapeId": {"ref": context_port_shape_key},
+                                "targetShapeId": {"ref": external_port_shape_key},
+                            }
+                        ],
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="route_paths",
+                    parameters={
+                        "diagram_id": {"ref": "logical_context_ibd"},
+                        "routes": [
+                            {
+                                "presentationId": {"ref": f"{connector_key}_path"},
+                                "resetLabels": True,
+                            }
+                        ],
+                    },
+                ),
+            ]
+        )
+
+        connector_refs.append((connector_key, context_port_key, external_port_key, part_key))
+
+    for index, flow_name in enumerate(flow_names, start=1):
+        connector_key, context_port_key, external_port_key, _ = connector_refs[(index - 1) % len(connector_refs)]
+        information_flow_key = f"information_flow_{index}"
+        operations.extend(
+            [
+                runtime.RecipeOperationDefinition(
+                    kind="create_relationship",
+                    artifact_key=information_flow_key,
+                    parameters={
+                        "type": "InformationFlow",
+                        "name": flow_name,
+                        "source_id": {"ref": context_port_key},
+                        "target_id": {"ref": external_port_key},
+                        "owner_id": {"ref": "logical_context_package"},
+                        "realizing_connector_id": {"ref": connector_key},
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="add_diagram_paths",
+                    artifact_key=f"{information_flow_key}_path",
+                    parameters={
+                        "diagram_id": {"ref": "logical_context_ibd"},
+                        "paths": [
+                            {
+                                "relationshipId": {"ref": information_flow_key},
+                                "sourceShapeId": {"ref": f"{context_port_key}_shape"},
+                                "targetShapeId": {"ref": f"{external_port_key}_shape"},
+                            }
+                        ],
+                    },
+                ),
+                runtime.RecipeOperationDefinition(
+                    kind="route_paths",
+                    parameters={
+                        "diagram_id": {"ref": "logical_context_ibd"},
+                        "routes": [
+                            {
+                                "presentationId": {"ref": f"{information_flow_key}_path"},
+                                "resetLabels": True,
+                            }
+                        ],
+                    },
+                ),
+            ]
+        )
+
+    semantic_validations: tuple[runtime.SemanticValidationDefinition, ...] = ()
+    if activity_diagram_id:
+        semantic_parameters: dict[str, Any] = {
+            "activity_diagram_id": activity_diagram_id,
+            "ibd_diagram_id": {"ref": "logical_context_ibd"},
+        }
+        if interface_block_ids:
+            semantic_parameters["interface_block_ids"] = interface_block_ids
+        semantic_validations = (
+            runtime.SemanticValidationDefinition(
+                validator_id="cross_diagram_traceability",
+                parameters=semantic_parameters,
+            ),
+        )
+
+    return runtime.RecipeDefinition(
+        recipe_id=recipe.id,
+        name=recipe.title,
+        phase=recipe.phase_id,
+        description=recipe.goal,
+        required_artifacts=tuple(required_artifacts),
+        required_relationships=(),
+        operations=tuple(operations),
+        review_checklist=tuple(recipe.review_sections),
+        evidence_sections=tuple(recipe.evidence_sections),
+        layout_recipe=recipe.layout_profile,
+        required_profiles=tuple(),
+        semantic_validations=semantic_validations,
+    )
+
+
 def _build_requirements_to_architecture_recipe(
     pack_id: str,
     recipe: registry.ArtifactRecipe,
@@ -1108,8 +2047,11 @@ def _build_requirements_to_architecture_recipe(
         ),
     ]
     relationship_requirements: list[runtime.RelationshipRequirement] = []
+    requirement_ref_keys: list[str] = []
+    allocated_block_keys: list[str] = []
 
     for index, requirement_id in enumerate(requirement_ids, start=1):
+        requirement_ref_keys.append(f"requirement_ref_{index}")
         required_artifacts.append(
             runtime.ArtifactRequirement(
                 key=f"requirement_ref_{index}",
@@ -1120,6 +2062,7 @@ def _build_requirements_to_architecture_recipe(
 
     for index, block_name in enumerate(block_names, start=1):
         block_key = f"allocated_block_{index}"
+        allocated_block_keys.append(block_key)
         required_artifacts.append(
             runtime.ArtifactRequirement(
                 key=block_key,
@@ -1173,7 +2116,17 @@ def _build_requirements_to_architecture_recipe(
                     },
                 )
             )
-
+    semantic_validations = ()
+    if requirement_ref_keys and allocated_block_keys:
+        semantic_validations = (
+            runtime.SemanticValidationDefinition(
+                validator_id="requirements_to_architecture_trace",
+                parameters={
+                    "requirement_ids": [{"ref": key} for key in requirement_ref_keys],
+                    "architecture_element_ids": [{"ref": key} for key in allocated_block_keys],
+                },
+            ),
+        )
     return runtime.RecipeDefinition(
         recipe_id=recipe.id,
         name=recipe.title,
@@ -1186,6 +2139,7 @@ def _build_requirements_to_architecture_recipe(
         evidence_sections=tuple(recipe.evidence_sections),
         layout_recipe=recipe.layout_profile,
         required_profiles=tuple(),
+        semantic_validations=semantic_validations,
     )
 
 
@@ -1398,6 +2352,72 @@ def _string_list(value: Any) -> list[str]:
     return [str(item) for item in value]
 
 
+def _default_port_name(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", value).strip("_").lower()
+    return normalized or "port"
+
+
+def _normalize_flow_property_direction(value: Any) -> str:
+    direction = _default_port_name(str(value or "out")).replace("_", "")
+    if direction in {"in", "input", "incoming", "receive", "required"}:
+        return "in"
+    if direction in {"out", "output", "outgoing", "send", "provided"}:
+        return "out"
+    if direction in {"inout", "bidirectional", "both"}:
+        return "inout"
+    return "out"
+
+
+def _interface_definitions(value: Any) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    if isinstance(value, Mapping) or isinstance(value, str):
+        raw_items = [value]
+    else:
+        raw_items = list(value)
+
+    normalized: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(raw_items, start=1):
+        if isinstance(raw_item, Mapping):
+            name = _optional_str(raw_item.get("name")) or f"Interface {index}"
+            port_name = _optional_str(raw_item.get("port_name") or raw_item.get("portName")) or _default_port_name(name)
+            raw_flow_properties = (
+                raw_item.get("flow_properties")
+                or raw_item.get("flowProperties")
+                or ()
+            )
+        else:
+            name = str(raw_item)
+            port_name = _default_port_name(name)
+            raw_flow_properties = ()
+
+        if isinstance(raw_flow_properties, Mapping) or isinstance(raw_flow_properties, str):
+            flow_property_items = [raw_flow_properties]
+        else:
+            flow_property_items = list(raw_flow_properties)
+
+        flow_properties: list[dict[str, str]] = []
+        for flow_index, raw_flow_property in enumerate(flow_property_items, start=1):
+            if isinstance(raw_flow_property, Mapping):
+                flow_name = _optional_str(
+                    raw_flow_property.get("name") or raw_flow_property.get("label")
+                ) or f"Flow {flow_index}"
+                direction = _normalize_flow_property_direction(raw_flow_property.get("direction"))
+            else:
+                flow_name = str(raw_flow_property)
+                direction = "out"
+            flow_properties.append({"name": flow_name, "direction": direction})
+
+        normalized.append(
+            {
+                "name": name,
+                "port_name": port_name,
+                "flow_properties": flow_properties,
+            }
+        )
+    return normalized
+
+
 def _coalesce_requirement_ids(
     requirement_ids: Sequence[str],
     requirement_texts: Sequence[str],
@@ -1426,6 +2446,17 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _preferred_live_kind(existing_kind: str, live_kind: Any) -> str:
+    live_text = _optional_str(live_kind) or existing_kind
+    live_normalized = re.sub(r"\s+", "", live_text).lower()
+    existing_normalized = re.sub(r"\s+", "", existing_kind).lower()
+    if live_normalized == "diagram" and "diagram" in existing_normalized:
+        return existing_kind
+    if live_normalized == "model" and existing_normalized == "package":
+        return existing_kind
+    return live_text
 
 
 def _root_package_id(
@@ -1612,7 +2643,10 @@ async def _hydrate_live_artifacts(
         hydrated.append(
             runtime.ArtifactSnapshot(
                 key=artifact.key,
-                kind=str((element or {}).get("humanType") or (element or {}).get("type") or artifact.kind),
+                kind=_preferred_live_kind(
+                    artifact.kind,
+                    (element or {}).get("humanType") or (element or {}).get("type"),
+                ),
                 name=str((element or {}).get("name") or artifact.name),
                 element_id=artifact.element_id,
                 parent_key=artifact.parent_key
@@ -1757,6 +2791,116 @@ async def _capture_diagram_snapshots(
     return snapshots
 
 
+async def _run_semantic_validations(
+    recipe: runtime.RecipeDefinition,
+    artifacts: Sequence[runtime.ArtifactSnapshot],
+    *,
+    bridge: Any,
+) -> list[dict[str, Any]]:
+    if not recipe.semantic_validations:
+        return []
+
+    bindings = {
+        artifact.key: artifact.element_id
+        for artifact in artifacts
+        if artifact.element_id
+    }
+    results: list[dict[str, Any]] = []
+    for definition in recipe.semantic_validations:
+        validator_id = definition.validator_id
+        try:
+            resolved_parameters = runtime._resolve_value(definition.parameters, bindings)
+        except KeyError as exc:
+            results.append(
+                {
+                    "validatorId": validator_id,
+                    "ok": False,
+                    "checks": [
+                        {
+                            "name": "binding-resolution",
+                            "ok": False,
+                            "details": {"message": str(exc)},
+                        }
+                    ],
+                }
+            )
+            continue
+
+        try:
+            result = await _invoke_semantic_validator(
+                validator_id,
+                resolved_parameters,
+                bridge=bridge,
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "validatorId": validator_id,
+                    "ok": False,
+                    "checks": [
+                        {
+                            "name": "execution",
+                            "ok": False,
+                            "details": {"message": str(exc)},
+                        }
+                    ],
+                }
+            )
+            continue
+
+        normalized = dict(result)
+        normalized.setdefault("validatorId", validator_id)
+        results.append(normalized)
+    return results
+
+
+async def _invoke_semantic_validator(
+    validator_id: str,
+    parameters: Mapping[str, Any],
+    *,
+    bridge: Any,
+) -> dict[str, Any]:
+    if validator_id == "activity_flow_semantics":
+        return await verify_activity_flow_semantics_for_diagram(
+            str(parameters["diagram_id"]),
+            max_partition_depth=int(parameters.get("max_partition_depth", 1)),
+            allow_stereotype_partition_labels=bool(
+                parameters.get("allow_stereotype_partition_labels", False)
+            ),
+            bridge=bridge,
+        )
+    if validator_id == "port_boundary_consistency":
+        return await verify_port_boundary_consistency_for_interfaces(
+            parameters.get("interface_block_ids") or (),
+            allow_shared_flow_property_names=parameters.get("allow_shared_flow_property_names"),
+            bridge=bridge,
+        )
+    if validator_id == "requirement_quality":
+        return await verify_requirement_quality_for_ids(
+            parameters.get("requirement_ids") or (),
+            require_id=bool(parameters.get("require_id", True)),
+            require_measurement=bool(parameters.get("require_measurement", True)),
+            min_text_length=int(parameters.get("min_text_length", 20)),
+            bridge=bridge,
+        )
+    if validator_id == "cross_diagram_traceability":
+        return await run_cross_diagram_traceability(
+            activity_diagram_id=_optional_str(parameters.get("activity_diagram_id")),
+            interface_block_ids=parameters.get("interface_block_ids") or (),
+            ibd_diagram_id=_optional_str(parameters.get("ibd_diagram_id")),
+            requirement_ids=parameters.get("requirement_ids") or (),
+            architecture_element_ids=parameters.get("architecture_element_ids") or (),
+            bridge=bridge,
+        )
+    if validator_id == "requirements_to_architecture_trace":
+        return await run_cross_diagram_traceability(
+            requirement_ids=parameters.get("requirement_ids") or (),
+            architecture_element_ids=parameters.get("architecture_element_ids") or (),
+            bridge=bridge,
+        )
+    raise ValueError(f"Unsupported semantic validator: {validator_id}")
+
+
 async def _build_bridge_evidence(
     artifacts: Sequence[runtime.ArtifactSnapshot],
     execution_result: runtime.RecipeExecutionResult,
@@ -1764,6 +2908,7 @@ async def _build_bridge_evidence(
     before_diagram_ids: Sequence[str],
     before_snapshots: Sequence[Mapping[str, Any]],
     after_diagram_ids: Sequence[str],
+    semantic_validations: Sequence[Mapping[str, Any]],
     bridge: Any,
 ) -> dict[str, Any]:
     created_element_ids: list[str] = []
@@ -1787,6 +2932,7 @@ async def _build_bridge_evidence(
         "createdPresentationIds": created_presentation_ids,
         "receipts": [receipt.result for receipt in execution_result.receipts],
         "liveArtifacts": [runtime._to_plain(artifact) for artifact in artifacts],
+        "semanticValidations": list(semantic_validations),
         "diagramSnapshots": {
             "before": list(before_snapshots),
             "after": await _capture_diagram_snapshots(after_diagram_ids, bridge),
@@ -1834,6 +2980,55 @@ def _render_review_packet(
         )
     else:
         lines.append("- No findings.")
+    semantic_validations = (bundle.bridge_evidence.get("semanticValidations") if bundle.bridge_evidence else ()) or ()
+    if semantic_validations:
+        semantic_passed = sum(1 for validation in semantic_validations if validation.get("ok"))
+        semantic_failed = len(semantic_validations) - semantic_passed
+        lines.extend(
+            [
+                "",
+                "## Semantic Validation",
+                f"- Validators Run: {len(semantic_validations)}",
+                f"- Passed: {semantic_passed}",
+                f"- Failed: {semantic_failed}",
+            ]
+        )
+        for validation in semantic_validations:
+            validator_id = str(validation.get("validatorId") or validation.get("validationId") or "semantic")
+            failed_checks = [
+                str(check.get("name"))
+                for check in validation.get("checks", ())
+                if isinstance(check, Mapping) and not check.get("ok")
+            ]
+            status = "PASS" if validation.get("ok") else "FAIL"
+            lines.append(
+                f"- `{validator_id}`: `{status}`"
+                + (f" ({', '.join(failed_checks)})" if failed_checks else "")
+            )
+            if failed_checks:
+                for check in validation.get("checks", ()):
+                    if not isinstance(check, Mapping) or check.get("ok"):
+                        continue
+                    details = check.get("details")
+                    if not isinstance(details, Mapping):
+                        continue
+                    highlights = []
+                    for key in (
+                        "missing",
+                        "missingIdIds",
+                        "blankTextIds",
+                        "weakTextIds",
+                        "missingPortTerms",
+                        "missingIbdTerms",
+                        "missingRequirementTraceIds",
+                        "isolatedActionIds",
+                        "unreachableActionIds",
+                    ):
+                        value = details.get(key)
+                        if value:
+                            highlights.append(f"{key}={value}")
+                    if highlights:
+                        lines.append(f"  - `{check.get('name')}` details: " + "; ".join(highlights))
     if bundle.assumptions:
         lines.extend(["", "## Assumptions"])
         lines.extend(f"- {assumption}" for assumption in bundle.assumptions)

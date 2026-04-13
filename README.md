@@ -2,7 +2,7 @@
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
 
-This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 49 tools covering capability negotiation, methodology-aware OOSEM workflows, elements, relationships, native requirement matrices, diagrams, reusable verification, specifications, and Groovy macro execution.
+This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 57 tools covering capability negotiation, methodology-aware OOSEM workflows, semantic validation, state-machine semantics, elements, relationships, native requirement matrices, diagrams, reusable verification, specifications, and Groovy macro execution.
 
 ```
 Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (Cameo JVM)
@@ -160,7 +160,15 @@ before proceeding.
 
 The Python MCP layer also ships a Phase 2 methodology surface for bounded
 OOSEM workflows. These tools build named artifact recipes, workflow guidance,
-conformance checks, and compact review packets on top of the low-level bridge.
+conformance checks, semantic validation, and compact review packets on top of
+the low-level bridge.
+
+## What's New In 2.0
+
+- Structured state-machine semantics for transition triggers plus `entry` / `do` / `exit` behaviors
+- Python-side semantic validators for activity flow coherence, port/interface ownership, requirement quality, and cross-diagram traceability
+- New OOSEM recipe starters for logical activity flows, logical port BDDs, and logical IBD traceability views
+- Review packets that surface semantic findings alongside structural conformance and diagram evidence
 
 ## Configuration
 
@@ -298,6 +306,28 @@ Use `cameo_list_diagram_types` if you want the accepted aliases too. Common form
 | `cameo_verify_diagram_visual` | Check rendered PNG validity, diagram/path presence, content coverage, and coarse overlap risk |
 
 These verification tools are Python-side wrappers over the bridge's native diagram and matrix readback. They are intended for repeatable regression checks, visual sanity validation, and lightweight quantitative validation without dropping to raw macros.
+
+### Semantic Validation (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `cameo_verify_activity_flow_semantics` | Check connected behavior flow, initial/final reachability, and swimlane sanity on an activity diagram |
+| `cameo_verify_port_boundary_consistency` | Check interface-block flow-property ownership, duplicate vocabulary, and direction conflicts |
+| `cameo_verify_requirement_quality` | Check requirement IDs, non-blank text, and basic measurability/readiness |
+| `cameo_verify_cross_diagram_traceability` | Compare activity, interface, IBD, and requirements-to-architecture vocabulary/trace coverage |
+
+These tools are the semantics-first layer for MBSE review. They use bridge readback plus lightweight Python heuristics to catch the common failure mode where a diagram looks plausible but does not hold together as a reviewable model.
+
+### State Machine Semantics (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `cameo_get_transition_triggers` | Read explicit trigger semantics for one transition |
+| `cameo_set_transition_trigger` | Create or replace one change-event or signal-event trigger |
+| `cameo_get_state_behaviors` | Read `entry`, `do`, and `exit` state behaviors |
+| `cameo_set_state_behaviors` | Create or replace structured `entry`, `do`, and `exit` behavior payloads |
+
+These tools give the MCP layer first-class state semantics instead of forcing agents to approximate them through generic specification writes or raw macro fallback.
 
 ### Specification (3 tools)
 
@@ -437,7 +467,7 @@ cameo-mcp-bridge/
     cameo_mcp/
       __init__.py
       client.py                        # HTTP client for the Java plugin
-      server.py                        # MCP tool definitions (49 tools)
+      server.py                        # MCP tool definitions (57 tools)
       verification.py                  # reusable diagram/matrix verification helpers
       methodology/                     # Phase 2 pack registry + recipe runtime
         registry.py

@@ -2,13 +2,13 @@
 <plugin
     id="com.claude.cameo.bridge"
     name="Cameo MCP Bridge"
-    version="1.0.0"
+    version="2.0.0"
     provider-name="Claude Code"
     class="com.claude.cameo.bridge.CameoMCPBridgePlugin">
     <requires>
         <api version="1.0"/>
     </requires>
     <runtime>
-        <library name="cameo-mcp-bridge-1.0.0.jar"/>
+        <library name="cameo-mcp-bridge-2.0.0.jar"/>
     </runtime>
 </plugin>

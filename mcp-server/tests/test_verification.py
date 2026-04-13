@@ -6,8 +6,14 @@ from PIL import Image, ImageDraw
 
 from cameo_mcp.verification import (
     analyze_diagram_image,
+    extract_activity_trace_terms,
+    extract_ibd_trace_terms,
+    verify_activity_flow_semantics,
+    verify_cross_diagram_traceability,
     verify_diagram_visual,
     verify_matrix_consistency,
+    verify_port_boundary_consistency,
+    verify_requirement_quality,
 )
 
 
@@ -185,6 +191,224 @@ class MatrixVerificationTests(unittest.TestCase):
             if check["name"] == "payload-counts-consistent"
         )
         self.assertFalse(count_check["ok"])
+
+
+class ActivityFlowVerificationTests(unittest.TestCase):
+    def test_verify_activity_flow_semantics_flags_islands_and_partition_smells(self) -> None:
+        result = verify_activity_flow_semantics(
+            [
+                {"id": "n1", "type": "InitialNode", "name": "Start"},
+                {"id": "a1", "type": "OpaqueAction", "name": "Query Available Slots"},
+                {"id": "a2", "type": "OpaqueAction", "name": "Display Available Slots"},
+                {"id": "f1", "type": "ActivityFinalNode", "name": "Done"},
+                {"id": "a3", "type": "OpaqueAction", "name": "Send Confirmation"},
+                {"id": "p1", "type": "ActivityPartition", "name": "«allocate»"},
+                {"id": "p2", "type": "ActivityPartition", "name": "Scheduling System"},
+            ],
+            [
+                {
+                    "relationshipId": "r1",
+                    "type": "ControlFlow",
+                    "sources": [{"id": "n1"}],
+                    "targets": [{"id": "a1"}],
+                },
+                {
+                    "relationshipId": "r2",
+                    "type": "ControlFlow",
+                    "sources": [{"id": "a1"}],
+                    "targets": [{"id": "a2"}],
+                },
+                {
+                    "relationshipId": "r3",
+                    "type": "ControlFlow",
+                    "sources": [{"id": "a2"}],
+                    "targets": [{"id": "f1"}],
+                },
+            ],
+            shapes=[
+                {
+                    "presentationId": "pe-p1",
+                    "elementId": "p1",
+                    "elementType": "ActivityPartition",
+                },
+                {
+                    "presentationId": "pe-p2",
+                    "parentPresentationId": "pe-p1",
+                    "elementId": "p2",
+                    "elementType": "ActivityPartition",
+                },
+                {
+                    "presentationId": "pe-a1",
+                    "parentPresentationId": "pe-p2",
+                    "elementId": "a1",
+                    "elementType": "OpaqueAction",
+                },
+                {
+                    "presentationId": "pe-a2",
+                    "parentPresentationId": "pe-p2",
+                    "elementId": "a2",
+                    "elementType": "OpaqueAction",
+                },
+                {
+                    "presentationId": "pe-a3",
+                    "parentPresentationId": "pe-p2",
+                    "elementId": "a3",
+                    "elementType": "OpaqueAction",
+                },
+            ],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("a3", result["metrics"]["isolatedActionIds"])
+        self.assertIn("a3", result["metrics"]["unreachableActionIds"])
+        partition_check = next(check for check in result["checks"] if check["name"] == "partition-sanity")
+        self.assertFalse(partition_check["ok"])
+
+    def test_verify_activity_flow_semantics_accepts_connected_flow(self) -> None:
+        result = verify_activity_flow_semantics(
+            [
+                {"id": "n1", "type": "InitialNode"},
+                {"id": "a1", "type": "OpaqueAction", "name": "Select Provider and Service"},
+                {"id": "a2", "type": "OpaqueAction", "name": "Select Time Slot"},
+                {"id": "f1", "type": "ActivityFinalNode"},
+            ],
+            [
+                {
+                    "relationshipId": "r1",
+                    "type": "ControlFlow",
+                    "sources": [{"id": "n1"}],
+                    "targets": [{"id": "a1"}],
+                },
+                {
+                    "relationshipId": "r2",
+                    "type": "ControlFlow",
+                    "sources": [{"id": "a1"}],
+                    "targets": [{"id": "a2"}],
+                },
+                {
+                    "relationshipId": "r3",
+                    "type": "ControlFlow",
+                    "sources": [{"id": "a2"}],
+                    "targets": [{"id": "f1"}],
+                },
+            ],
+        )
+
+        self.assertTrue(result["ok"])
+
+
+class PortBoundaryVerificationTests(unittest.TestCase):
+    def test_verify_port_boundary_consistency_scopes_direction_conflicts_to_owner(self) -> None:
+        result = verify_port_boundary_consistency(
+            [
+                {"id": "if-1", "name": "Customer UI Port Type"},
+                {"id": "if-2", "name": "Scheduling System Port Type"},
+            ],
+            [
+                {"id": "fp-1", "name": "Available Slots", "ownerId": "if-1", "direction": "out"},
+                {"id": "fp-2", "name": "Available Slots", "ownerId": "if-1", "direction": "in"},
+                {"id": "fp-3", "name": "Available Slots", "ownerId": "if-2", "direction": "in"},
+            ],
+            allow_shared_flow_property_names=["Available Slots"],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertNotIn("available slots", result["metrics"]["duplicateFlowProperties"])
+        self.assertIn("Customer UI Port Type", result["metrics"]["directionConflicts"])
+        self.assertIn("available slots", result["metrics"]["directionConflicts"]["Customer UI Port Type"])
+        self.assertNotIn("Scheduling System Port Type", result["metrics"]["directionConflicts"])
+
+
+class RequirementQualityVerificationTests(unittest.TestCase):
+    def test_verify_requirement_quality_flags_blank_and_weak_requirements(self) -> None:
+        result = verify_requirement_quality(
+            [
+                {
+                    "id": "req-1",
+                    "name": "Appointment Response Time",
+                    "appliedStereotypes": [{"stereotype": "Requirement", "taggedValues": {"id": "REQ-1", "text": ""}}],
+                },
+                {
+                    "id": "req-2",
+                    "name": "System Availability",
+                    "appliedStereotypes": [{"stereotype": "Requirement", "taggedValues": {"id": "", "text": "The system shall be easy to use."}}],
+                },
+                {
+                    "id": "req-3",
+                    "name": "Confirmation",
+                    "documentation": "The system shall send confirmation within 5 seconds of booking.",
+                },
+            ],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("req-1", result["metrics"]["blankTextIds"])
+        self.assertIn("req-2", result["metrics"]["missingIdIds"])
+        self.assertIn("req-2", result["metrics"]["weakTextIds"])
+        req3 = next(item for item in result["metrics"]["evaluatedRequirements"] if item["elementId"] == "req-3")
+        self.assertTrue(req3["isMeasurable"])
+
+
+class CrossDiagramTraceabilityVerificationTests(unittest.TestCase):
+    def test_verify_cross_diagram_traceability_flags_missing_matches(self) -> None:
+        result = verify_cross_diagram_traceability(
+            activity_terms=[
+                "Query Available Slots",
+                "Display Available Slots",
+                "Select Provider and Service",
+            ],
+            port_terms=["Available Slots", "Appointment Record"],
+            ibd_terms=["Available Slots", "Provider Selection"],
+            requirement_links={"req-1": ["blk-1"], "req-2": []},
+            requirement_ids=["req-1", "req-2"],
+            architecture_element_ids=["blk-1"],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Appointment Record", result["metrics"]["missingPortTerms"])
+        self.assertIn("req-2", result["metrics"]["missingRequirementTraceIds"])
+
+    def test_verify_cross_diagram_traceability_rejects_single_token_overlap_false_positive(self) -> None:
+        result = verify_cross_diagram_traceability(
+            activity_terms=["AAS System Status"],
+            port_terms=["System"],
+            ibd_terms=["System"],
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("System", result["metrics"]["missingPortTerms"])
+        self.assertIn("System", result["metrics"]["missingIbdTerms"])
+
+    def test_extract_trace_terms_include_flow_labels(self) -> None:
+        activity_terms = extract_activity_trace_terms(
+            [
+                {"id": "a1", "type": "OpaqueAction", "name": "Display Available Slots"},
+                {"id": "o1", "type": "ObjectNode", "name": "Available Slots"},
+            ],
+            [
+                {
+                    "relationshipId": "r1",
+                    "type": "ObjectFlow",
+                    "itemProperty": {"id": "p1", "name": "Available Slots"},
+                    "conveyed": [{"id": "blk-1", "name": "Appointment Record"}],
+                }
+            ],
+        )
+        ibd_terms = extract_ibd_trace_terms(
+            [{"id": "p1", "type": "Port", "name": "Customer UI"}],
+            [
+                {
+                    "relationshipId": "r2",
+                    "type": "ItemFlow",
+                    "name": "Availability Query",
+                    "conveyed": [{"id": "blk-2", "name": "Available Slots"}],
+                }
+            ],
+        )
+
+        self.assertIn("Available Slots", activity_terms)
+        self.assertIn("Appointment Record", activity_terms)
+        self.assertIn("Availability Query", ibd_terms)
 
 
 if __name__ == "__main__":

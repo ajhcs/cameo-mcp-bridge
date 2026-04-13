@@ -7,8 +7,16 @@ from cameo_mcp.server import (
     cameo_list_diagram_types,
     cameo_list_matrix_kinds,
     cameo_list_methodology_packs,
+    cameo_get_state_behaviors,
+    cameo_get_transition_triggers,
+    cameo_set_state_behaviors,
+    cameo_set_transition_trigger,
+    cameo_verify_activity_flow_semantics,
+    cameo_verify_cross_diagram_traceability,
     cameo_verify_diagram_visual,
     cameo_verify_matrix_consistency,
+    cameo_verify_port_boundary_consistency,
+    cameo_verify_requirement_quality,
 )
 
 
@@ -23,7 +31,7 @@ class McpResultTests(unittest.TestCase):
 
 class ServerToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_cameo_get_capabilities_returns_native_dict(self) -> None:
-        payload = {"pluginVersion": "1.0.0", "compatibility": {"clientCompatible": True}}
+        payload = {"pluginVersion": "2.0.0", "compatibility": {"clientCompatible": True}}
 
         with patch(
             "cameo_mcp.server.client.get_capabilities",
@@ -135,6 +143,165 @@ class ServerToolTests(unittest.IsolatedAsyncioTestCase):
             expected_dependency_names=["Refine"],
             min_populated_cell_count=1,
             min_density=0.25,
+        )
+
+    async def test_cameo_verify_activity_flow_semantics_wraps_helper(self) -> None:
+        payload = {"ok": True, "checks": []}
+
+        with patch(
+            "cameo_mcp.server.verify_activity_flow_semantics_for_diagram",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_verify_activity_flow_semantics(
+                "dia-1",
+                max_partition_depth=2,
+                allow_stereotype_partition_labels=True,
+            )
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with(
+            "dia-1",
+            max_partition_depth=2,
+            allow_stereotype_partition_labels=True,
+        )
+
+    async def test_cameo_verify_port_boundary_consistency_wraps_helper(self) -> None:
+        payload = {"ok": True, "checks": []}
+
+        with patch(
+            "cameo_mcp.server.verify_port_boundary_consistency_for_interfaces",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_verify_port_boundary_consistency(
+                ["if-1", "if-2"],
+                allow_shared_flow_property_names=["Heartbeat"],
+            )
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with(
+            ["if-1", "if-2"],
+            allow_shared_flow_property_names=["Heartbeat"],
+        )
+
+    async def test_cameo_verify_requirement_quality_wraps_helper(self) -> None:
+        payload = {"ok": True, "checks": []}
+
+        with patch(
+            "cameo_mcp.server.verify_requirement_quality_for_ids",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_verify_requirement_quality(
+                ["req-1"],
+                require_id=False,
+                require_measurement=False,
+                min_text_length=10,
+            )
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with(
+            ["req-1"],
+            require_id=False,
+            require_measurement=False,
+            min_text_length=10,
+        )
+
+    async def test_cameo_verify_cross_diagram_traceability_wraps_helper(self) -> None:
+        payload = {"ok": True, "checks": []}
+
+        with patch(
+            "cameo_mcp.server.run_cross_diagram_traceability",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_verify_cross_diagram_traceability(
+                activity_diagram_id="act-1",
+                interface_block_ids=["if-1"],
+                ibd_diagram_id="ibd-1",
+                requirement_ids=["req-1"],
+                architecture_element_ids=["blk-1"],
+            )
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with(
+            activity_diagram_id="act-1",
+            interface_block_ids=["if-1"],
+            ibd_diagram_id="ibd-1",
+            requirement_ids=["req-1"],
+            architecture_element_ids=["blk-1"],
+        )
+
+    async def test_cameo_get_transition_triggers_wraps_helper(self) -> None:
+        payload = {"transitionId": "tr-1", "triggerCount": 1, "triggers": []}
+
+        with patch(
+            "cameo_mcp.server.get_transition_triggers",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_get_transition_triggers("tr-1")
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with("tr-1")
+
+    async def test_cameo_set_transition_trigger_wraps_helper(self) -> None:
+        payload = {"transitionId": "tr-1", "triggerCount": 1, "triggers": []}
+
+        with patch(
+            "cameo_mcp.server.set_transition_trigger",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_set_transition_trigger(
+                "tr-1",
+                trigger_kind="change",
+                expression="when ticket is inserted",
+                name="TicketInserted",
+                replace=False,
+            )
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with(
+            "tr-1",
+            trigger_kind="change",
+            expression="when ticket is inserted",
+            signal_id=None,
+            name="TicketInserted",
+            replace=False,
+        )
+
+    async def test_cameo_get_state_behaviors_wraps_helper(self) -> None:
+        payload = {"stateId": "st-1", "entry": None, "doActivity": None, "exit": None}
+
+        with patch(
+            "cameo_mcp.server.get_state_behaviors",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_get_state_behaviors("st-1")
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with("st-1")
+
+    async def test_cameo_set_state_behaviors_wraps_helper(self) -> None:
+        payload = {"stateId": "st-1", "entry": None, "doActivity": None, "exit": None}
+
+        with patch(
+            "cameo_mcp.server.set_state_behaviors",
+            new=AsyncMock(return_value=payload),
+        ) as helper:
+            result = await cameo_set_state_behaviors(
+                "st-1",
+                entry="initialize reader",
+                do_activity="wait for card",
+                exit_behavior="clear display",
+                language="StructuredText",
+                clear_unspecified=True,
+            )
+
+        self.assertIs(result, payload)
+        helper.assert_awaited_once_with(
+            "st-1",
+            entry="initialize reader",
+            do_activity="wait for card",
+            exit_behavior="clear display",
+            language="StructuredText",
+            clear_unspecified=True,
         )
 
 

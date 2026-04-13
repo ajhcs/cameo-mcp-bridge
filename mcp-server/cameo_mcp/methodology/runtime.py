@@ -46,7 +46,7 @@ def _matching_artifacts(
 
 
 def _result_primary_id(result: Mapping[str, Any]) -> str | None:
-    direct = result.get("id") or result.get("diagramId") or result.get("presentationId")
+    direct = result.get("id") or result.get("presentationId")
     if direct is not None:
         return str(direct)
 
@@ -63,6 +63,9 @@ def _result_primary_id(result: Mapping[str, Any]) -> str | None:
             presentation_id = entry.get("presentationId")
             if presentation_id is not None:
                 return str(presentation_id)
+    diagram_id = result.get("diagramId")
+    if diagram_id is not None:
+        return str(diagram_id)
     return None
 
 
@@ -137,6 +140,7 @@ class RecipeDefinition:
     evidence_sections: tuple[str, ...] = ()
     layout_recipe: str | None = None
     required_profiles: tuple[str, ...] = ()
+    semantic_validations: tuple["SemanticValidationDefinition", ...] = ()
 
     def required_artifact_keys(self) -> tuple[str, ...]:
         return tuple(requirement.key for requirement in self.required_artifacts)
@@ -254,6 +258,15 @@ class ConformanceReport:
     passed: bool
     findings: tuple[ConformanceFinding, ...] = ()
     summary: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return _to_plain(self)
+
+
+@dataclass(frozen=True)
+class SemanticValidationDefinition:
+    validator_id: str
+    parameters: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return _to_plain(self)
@@ -538,7 +551,7 @@ async def execute_recipe(
                     kind="specification",
                     name=step.operation.artifact_key,
                     element_id=bindings.get(step.operation.artifact_key),
-                    properties=step.resolved_parameters.get("properties", {}),
+                    properties=resolved_parameters.get("properties", {}),
                 )
             )
 
@@ -679,6 +692,88 @@ def run_conformance_checks(
         findings=tuple(findings),
         summary=summary,
     )
+
+
+def semantic_validation_findings(
+    validation_results: Sequence[Mapping[str, Any]],
+) -> tuple[ConformanceFinding, ...]:
+    findings: list[ConformanceFinding] = []
+    for validation in validation_results:
+        validator_id = str(
+            validation.get("validatorId")
+            or validation.get("validationId")
+            or "semantic"
+        )
+        for check in validation.get("checks") or ():
+            if not isinstance(check, Mapping) or check.get("ok"):
+                continue
+            check_name = str(check.get("name") or "check")
+            findings.append(
+                ConformanceFinding(
+                    rule_id=f"semantic:{validator_id}:{check_name}",
+                    severity="error",
+                    message=_semantic_failure_message(validator_id, check_name, check.get("details")),
+                )
+            )
+    return tuple(findings)
+
+
+def extend_conformance_report(
+    report: ConformanceReport,
+    extra_findings: Sequence[ConformanceFinding],
+) -> ConformanceReport:
+    combined = tuple(report.findings) + tuple(extra_findings)
+    passed = not combined
+    summary = "passed" if passed else f"{len(combined)} issue(s) found"
+    return ConformanceReport(
+        pack_id=report.pack_id,
+        recipe_id=report.recipe_id,
+        passed=passed,
+        findings=combined,
+        summary=summary,
+    )
+
+
+def _semantic_failure_message(
+    validator_id: str,
+    check_name: str,
+    details: Any,
+) -> str:
+    if isinstance(details, Mapping):
+        message = details.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+
+    detail_map = details if isinstance(details, Mapping) else {}
+    detail_keys = (
+        "isolatedActionIds",
+        "unreachableActionIds",
+        "containerOnlyPartitions",
+        "stereotypeStyleNames",
+        "duplicateFlowProperties",
+        "directionConflicts",
+        "orphanPropertyIds",
+        "missingDirectionIds",
+        "missingIdIds",
+        "blankTextIds",
+        "weakTextIds",
+        "missingPortTerms",
+        "missingIbdTerms",
+        "missingRequirementTraceIds",
+        "missing",
+    )
+    for key in detail_keys:
+        value = detail_map.get(key)
+        if isinstance(value, Mapping) and value:
+            preview = ", ".join(str(item) for item in list(value)[:3])
+            return f"{validator_id} check '{check_name}' failed: {preview}"
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and value:
+            preview = ", ".join(str(item) for item in list(value)[:3])
+            suffix = "..." if len(value) > 3 else ""
+            return f"{validator_id} check '{check_name}' failed: {preview}{suffix}"
+
+    pretty_name = check_name.replace("-", " ")
+    return f"{validator_id} check '{pretty_name}' failed"
 
 
 def build_evidence_bundle(

@@ -15,6 +15,18 @@ from cameo_mcp.methodology import (
     list_methodology_packs,
     validate_methodology_recipe,
 )
+from cameo_mcp.semantic_validation import (
+    verify_activity_flow_semantics_for_diagram,
+    verify_cross_diagram_traceability as run_cross_diagram_traceability,
+    verify_port_boundary_consistency_for_interfaces,
+    verify_requirement_quality_for_ids,
+)
+from cameo_mcp.state_machine_semantics import (
+    get_state_behaviors,
+    get_transition_triggers,
+    set_state_behaviors,
+    set_transition_trigger,
+)
 
 mcp = FastMCP(
     "CameoMCPBridge",
@@ -815,6 +827,170 @@ async def cameo_verify_matrix_consistency(
 
 
 @mcp.tool()
+async def cameo_verify_activity_flow_semantics(
+    diagram_id: str,
+    max_partition_depth: int = 1,
+    allow_stereotype_partition_labels: bool = False,
+) -> dict[str, Any]:
+    """Validate whether one activity diagram behaves like a coherent workflow.
+
+    Discovery
+    ---------
+    - Use `cameo_list_diagrams` to find the activity diagram ID.
+    - Use `cameo_list_diagram_shapes` if you want to inspect the diagram canvas
+      before running this validator.
+
+    When to use
+    -----------
+    - Activity diagrams that look like the right nouns/actions but may be
+      missing a real executable control/object flow.
+    - Swimlane layouts that may contain extra container layers or isolated
+      action islands.
+
+    Args:
+        diagram_id: Activity diagram ID.
+        max_partition_depth: Maximum allowed nested activity-partition depth.
+        allow_stereotype_partition_labels: When false, flags partition labels
+            that look like stereotype notation such as `«allocate»`.
+
+    Returns:
+        JSON with semantic checks, diagram readback, and the flattened flow
+        graph used for validation.
+    """
+    result = await verify_activity_flow_semantics_for_diagram(
+        diagram_id,
+        max_partition_depth=max_partition_depth,
+        allow_stereotype_partition_labels=allow_stereotype_partition_labels,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_verify_port_boundary_consistency(
+    interface_block_ids: list[str],
+    allow_shared_flow_property_names: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Validate interface-block flow-property ownership and duplication.
+
+    Discovery
+    ---------
+    - Use `cameo_query_elements(type="Class", stereotype="InterfaceBlock")`
+      or `cameo_query_elements(stereotype="InterfaceBlock")` to find the
+      interface blocks from the relevant port BDD.
+
+    When to use
+    -----------
+    - Port/interface reviews where the same artifact may have been copied onto
+      multiple interfaces without reasoning about boundary ownership.
+    - Suspected directionality mistakes on flow properties.
+
+    Args:
+        interface_block_ids: Interface block IDs to inspect together as one
+            boundary-validation set.
+        allow_shared_flow_property_names: Optional names that are allowed to
+            appear on more than one interface block.
+
+    Returns:
+        JSON with duplicate-flow, direction, and ownership checks plus the
+        extracted interface-block and flow-property readback.
+    """
+    result = await verify_port_boundary_consistency_for_interfaces(
+        interface_block_ids,
+        allow_shared_flow_property_names=allow_shared_flow_property_names,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_verify_requirement_quality(
+    requirement_ids: list[str],
+    require_id: bool = True,
+    require_measurement: bool = True,
+    min_text_length: int = 20,
+) -> dict[str, Any]:
+    """Validate whether SysML requirements contain real requirement content.
+
+    Discovery
+    ---------
+    - Use `cameo_query_elements(stereotype="Requirement")` or your package
+      query flow to collect requirement IDs before calling this tool.
+
+    When to use
+    -----------
+    - Requirement diagrams that have names and IDs but may have blank or weak
+      requirement statements.
+    - Release gates for measurable, reviewable requirement content.
+
+    Args:
+        requirement_ids: Requirement element IDs to evaluate.
+        require_id: When true, fail requirements that have no requirement ID.
+        require_measurement: When true, fail requirements that do not look
+            directive and measurable.
+        min_text_length: Minimum text length for a requirement statement to
+            count as non-trivial.
+
+    Returns:
+        JSON with per-requirement assessments and aggregate quality checks.
+    """
+    result = await verify_requirement_quality_for_ids(
+        requirement_ids,
+        require_id=require_id,
+        require_measurement=require_measurement,
+        min_text_length=min_text_length,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_verify_cross_diagram_traceability(
+    activity_diagram_id: Optional[str] = None,
+    interface_block_ids: Optional[list[str]] = None,
+    ibd_diagram_id: Optional[str] = None,
+    requirement_ids: Optional[list[str]] = None,
+    architecture_element_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Validate traceability across activity, port, IBD, and requirement views.
+
+    Discovery
+    ---------
+    - Use `cameo_list_diagrams` to find activity/IBD diagram IDs.
+    - Use `cameo_query_elements(stereotype="InterfaceBlock")` for interface
+      blocks and `cameo_query_elements(stereotype="Requirement")` for
+      requirements.
+
+    When to use
+    -----------
+    - Cross-view reviews where labels appear plausible but the mapping between
+      behavior, interfaces, structure, and requirements may be weak.
+    - Review packets that need a compact traceability summary.
+
+    Args:
+        activity_diagram_id: Optional activity diagram to extract behavior-side
+            terms from.
+        interface_block_ids: Optional interface blocks to compare against the
+            activity vocabulary.
+        ibd_diagram_id: Optional IBD to compare against the activity
+            vocabulary.
+        requirement_ids: Optional requirements to trace into the architecture
+            element set.
+        architecture_element_ids: Optional architecture element IDs that count
+            as valid requirement trace targets.
+
+    Returns:
+        JSON with whichever traceability checks are applicable to the supplied
+        artifact set.
+    """
+    result = await run_cross_diagram_traceability(
+        activity_diagram_id=activity_diagram_id,
+        interface_block_ids=interface_block_ids,
+        ibd_diagram_id=ibd_diagram_id,
+        requirement_ids=requirement_ids,
+        architecture_element_ids=architecture_element_ids,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
 async def cameo_list_matrix_kinds() -> dict[str, Any]:
     """List the validated native matrix kinds and example type domains."""
     return {
@@ -1419,6 +1595,120 @@ async def cameo_set_usecase_subject(
         element_id=element_id,
         subject_ids=subject_ids,
         append=append,
+    )
+    return _mcp_result(result)
+
+
+# -- State Machine Semantics --------------------------------------------------
+
+
+@mcp.tool()
+async def cameo_get_transition_triggers(
+    transition_id: str,
+) -> dict[str, Any]:
+    """Read the structured trigger/event state for a transition.
+
+    Use this when you need to inspect whether a transition is currently driven
+    by change-event logic, signal-event logic, or has no trigger at all.
+
+    Args:
+        transition_id: Element ID of a UML/SysML transition.
+
+    Returns:
+        JSON with trigger count plus each trigger's event type, signal link,
+        and change-expression text when present.
+    """
+    result = await get_transition_triggers(transition_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_set_transition_trigger(
+    transition_id: str,
+    trigger_kind: str,
+    expression: Optional[str] = None,
+    signal_id: Optional[str] = None,
+    name: Optional[str] = None,
+    replace: bool = True,
+) -> dict[str, Any]:
+    """Create or replace one transition trigger with explicit semantics.
+
+    Args:
+        transition_id: Element ID of a UML/SysML transition.
+        trigger_kind: Either `"change"` or `"signal"`.
+        expression: Required when `trigger_kind="change"`. Stored as the
+            transition's Change Event expression text.
+        signal_id: Required when `trigger_kind="signal"`. References an
+            existing `Signal` element.
+        name: Optional trigger display name.
+        replace: When true (default), existing triggers are removed before the
+            new trigger is created.
+
+    Returns:
+        JSON readback of the transition's current triggers after mutation.
+    """
+    result = await set_transition_trigger(
+        transition_id,
+        trigger_kind=trigger_kind,
+        expression=expression,
+        signal_id=signal_id,
+        name=name,
+        replace=replace,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_state_behaviors(
+    state_id: str,
+) -> dict[str, Any]:
+    """Read the structured entry/do/exit behavior payloads for a state.
+
+    Args:
+        state_id: Element ID of a UML/SysML state.
+
+    Returns:
+        JSON with `entry`, `doActivity`, and `exit` payloads, including body
+        and language when those behaviors exist.
+    """
+    result = await get_state_behaviors(state_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_set_state_behaviors(
+    state_id: str,
+    entry: Optional[str] = None,
+    do_activity: Optional[str] = None,
+    exit_behavior: Optional[str] = None,
+    language: str = "Opaque",
+    clear_unspecified: bool = False,
+) -> dict[str, Any]:
+    """Set structured entry/do/exit opaque behaviors for a state.
+
+    Notes:
+    - Pass an empty string for a specific field to clear that behavior.
+    - Omitted fields stay unchanged unless `clear_unspecified=True`.
+
+    Args:
+        state_id: Element ID of a UML/SysML state.
+        entry: Optional entry-behavior body text.
+        do_activity: Optional do-activity body text.
+        exit_behavior: Optional exit-behavior body text.
+        language: OpaqueBehavior language label stored alongside the body.
+        clear_unspecified: When true, omitted behavior slots are cleared.
+
+    Returns:
+        JSON readback of the state's current entry/do/exit behaviors after
+        mutation.
+    """
+    result = await set_state_behaviors(
+        state_id,
+        entry=entry,
+        do_activity=do_activity,
+        exit_behavior=exit_behavior,
+        language=language,
+        clear_unspecified=clear_unspecified,
     )
     return _mcp_result(result)
 

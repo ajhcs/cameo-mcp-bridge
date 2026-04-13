@@ -48,6 +48,7 @@ public class HttpBridgeServer {
         ElementQueryHandler queryHandler = new ElementQueryHandler();
         ElementMutationHandler mutationHandler = new ElementMutationHandler();
         SpecificationHandler specificationHandler = new SpecificationHandler();
+        server.createContext("/api/v1/elements/interface-flow-properties", queryHandler);
         server.createContext("/api/v1/elements", exchange -> {
             String path = exchange.getRequestURI().getPath();
             // Route /specification sub-paths to SpecificationHandler (GET and PUT)
