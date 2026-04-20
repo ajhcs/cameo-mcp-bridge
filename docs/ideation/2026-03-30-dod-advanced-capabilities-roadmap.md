@@ -192,7 +192,7 @@ Reason: the product already has too much unsafe escape hatch and not enough gove
 
 1. Ship the first layout recipes: `fishbone`, `subject-with-usecases`, `hierarchical`.
 2. Ship the first viewpoint pack: `OOSEM`.
-3. Add artifact recipes for OOSEM assignment-style workflows.
+3. Add artifact recipes for guided OOSEM workflows.
 4. Add evidence bundle export.
 
 ### Quarter-Scale

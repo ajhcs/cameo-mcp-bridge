@@ -30,7 +30,7 @@ from cameo_mcp.rubric_workflows import (
     assemble_ppt_pdf_live,
     compare_against_expected_artifact_list,
     export_required_diagrams_live,
-    validate_assignment_package_live,
+    validate_methodology_package_live,
 )
 from cameo_mcp.semantic_validation import (
     verify_activity_flow_semantics_for_diagram,
@@ -669,6 +669,16 @@ async def cameo_create_element(
     documentation: Optional[str] = None,
     behavior_id: Optional[str] = None,
     represents_id: Optional[str] = None,
+    type_id: Optional[str] = None,
+    lower: Optional[int] = None,
+    upper: Optional[int | str] = None,
+    is_ordered: Optional[bool] = None,
+    is_unique: Optional[bool] = None,
+    aggregation: Optional[str] = None,
+    is_behavior: Optional[bool] = None,
+    is_conjugated: Optional[bool] = None,
+    is_service: Optional[bool] = None,
+    direction: Optional[str] = None,
     metaclasses: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Create a new model element.
@@ -706,6 +716,19 @@ async def cameo_create_element(
         represents_id: For ActivityPartition (swimlane) type only -- links the
                        partition to the Block or Class it represents (the
                        performer).
+        type_id: Optional type element ID for TypedElement creation such as
+                 Property, Port, or FlowProperty.
+        lower: Optional lower multiplicity bound for multiplicity-bearing
+               elements such as Property and Port.
+        upper: Optional upper multiplicity bound. Use -1 or "*" for unlimited.
+        is_ordered: Optional multiplicity ordering flag.
+        is_unique: Optional multiplicity uniqueness flag.
+        aggregation: Optional Property aggregation value: "none", "shared",
+                     or "composite".
+        is_behavior: Optional Port behavior flag.
+        is_conjugated: Optional Port conjugation flag.
+        is_service: Optional Port service flag.
+        direction: Optional FlowProperty direction tag value.
         metaclasses: For Stereotype type only -- list of UML metaclass names
                      to bind, such as ["Class"] or ["Property"].
 
@@ -720,6 +743,16 @@ async def cameo_create_element(
         documentation=documentation,
         behavior_id=behavior_id,
         represents_id=represents_id,
+        type_id=type_id,
+        lower=lower,
+        upper=upper,
+        is_ordered=is_ordered,
+        is_unique=is_unique,
+        aggregation=aggregation,
+        is_behavior=is_behavior,
+        is_conjugated=is_conjugated,
+        is_service=is_service,
+        direction=direction,
         metaclasses=metaclasses,
     )
     return _mcp_result(result)
@@ -972,15 +1005,17 @@ async def cameo_list_matrices(
     kind: Optional[str] = None,
     owner_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """List supported native requirement matrices in the current project.
+    """List supported native matrix artifacts in the current project.
 
     This matrix family is intentionally separate from the diagram shape/path API.
-    It targets Cameo's native requirement-matrix artifacts, not arbitrary tables.
+    It targets Cameo's native matrix artifacts, not arbitrary tables.
 
     Args:
         kind: Optional matrix kind filter. Supported values:
               - "refine" for native Refine Requirement Matrix artifacts
               - "derive" for native Derive Requirement Matrix artifacts
+              - "satisfy" for native Satisfy Requirement Matrix artifacts
+              - "allocation" for native SysML Allocation Matrix artifacts
         owner_id: Optional package/namespace ID that owns the matrix artifact.
 
     Returns:
@@ -995,11 +1030,13 @@ async def cameo_list_matrices(
 
 @mcp.tool()
 async def cameo_get_matrix(matrix_id: str) -> dict[str, Any]:
-    """Read one supported native requirement matrix with populated cell data.
+    """Read one supported native matrix with populated cell data.
 
     Supported matrix artifacts currently include:
     - Refine Requirement Matrix
     - Derive Requirement Matrix
+    - Satisfy Requirement Matrix
+    - SysML Allocation Matrix
 
     The response includes row and column elements plus only the populated cells.
     Empty cells are omitted from `populatedCells`; infer gaps from the row/column
@@ -1329,7 +1366,7 @@ async def cameo_compare_expected_artifact_list(
 
 
 @mcp.tool()
-async def cameo_validate_assignment_package(
+async def cameo_validate_methodology_package(
     pack_id: str,
     recipe_id: Optional[str] = None,
     root_package_id: Optional[str] = None,
@@ -1337,7 +1374,7 @@ async def cameo_validate_assignment_package(
     expected_artifacts: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Validate a package or recipe scope against the methodology rubric."""
-    result = await validate_assignment_package_live(
+    result = await validate_methodology_package_live(
         pack_id,
         recipe_id=recipe_id,
         root_package_id=root_package_id,
@@ -1423,18 +1460,21 @@ async def cameo_create_matrix(
     row_types: Optional[list[str]] = None,
     column_types: Optional[list[str]] = None,
 ) -> dict[str, Any]:
-    """Create a native refine or derive requirement matrix artifact.
+    """Create a supported native matrix artifact.
 
     This creates Cameo's native matrix types:
     - "refine" -> Refine Requirement Matrix
     - "derive" -> Derive Requirement Matrix
+    - "satisfy" -> Satisfy Requirement Matrix
+    - "allocation" -> SysML Allocation Matrix
 
     The bridge configures the matrix to show all relevant rows/columns inside the
     selected scope so missing traceability remains visible.
 
     Args:
-        kind: Matrix kind: "refine" or "derive". Aliases such as
-              "Refine Requirement Matrix" and "Derive Requirement Matrix"
+        kind: Matrix kind: "refine", "derive", "satisfy", or "allocation".
+              Aliases such as "Refine Requirement Matrix",
+              "Satisfy Requirement Matrix", and "System Allocation Matrix"
               are normalized automatically.
         parent_id: Namespace/package ID that will own the matrix artifact.
         name: Optional display name. Defaults to Cameo's native matrix type name.
@@ -1443,7 +1483,7 @@ async def cameo_create_matrix(
         row_scope_id: Optional explicit row scope root.
         column_scope_id: Optional explicit column scope root.
         row_types: Optional row-domain type tokens. Each token may be a UML
-                  metaclass such as "UseCase" or "Property", or a stereotype
+                  metaclass such as "Activity" or "Property", or a stereotype
                   such as "Block", "Requirement", or "valueProperty". When
                   omitted, the bridge uses the native matrix defaults.
         column_types: Optional column-domain type tokens using the same

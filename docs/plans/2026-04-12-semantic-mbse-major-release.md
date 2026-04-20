@@ -9,7 +9,7 @@ deepened: 2026-04-12
 
 Date: 2026-04-12  
 Repo: `cameo-mcp-bridge`  
-Origin: MBSE assignment transcript corpus in `/mnt/d/services/filebrowser/data/MBSE/` plus [DoD-Grade Advanced Capability Roadmap](../ideation/2026-03-30-dod-advanced-capabilities-roadmap.md)
+Origin: MBSE reference transcript corpus in `/mnt/d/services/filebrowser/data/MBSE/` plus [DoD-Grade Advanced Capability Roadmap](../ideation/2026-03-30-dod-advanced-capabilities-roadmap.md)
 
 ## Problem Frame
 
@@ -176,7 +176,7 @@ Add validators that catch the exact failure modes seen in the MBSE review.
 
 ### Outcome
 
-Turn the bridge from primitive operations into repeatable MBSE workflows for the logical-architecture assignment class of work.
+Turn the bridge from primitive operations into repeatable MBSE workflows for the logical-architecture workflow class of work.
 
 ### Files
 
@@ -240,7 +240,7 @@ Lock the release against the MBSE transcript corpus and the specific failure mod
 ### Tasks
 
 - Add fixture material derived from the reviewed transcript corpus.
-- Add a live validation script that exercises the assignment workflow end to end against a running Cameo project.
+- Add a live validation script that exercises the workflow end to end against a running Cameo project.
 - Add regression cases for:
   - disconnected activity flow
   - wrong port ownership

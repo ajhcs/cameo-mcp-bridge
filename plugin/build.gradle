@@ -47,7 +47,7 @@ dependencies {
     testRuntimeOnly files(new File(gradle.gradleHomeDir, 'lib/hamcrest-core-1.3.jar'))
 }
 
-tasks.named('compileJava') {
+tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-Xlint:-deprecation', '-Xlint:-unchecked']
     if (jdk17Home) {
         options.fork = true
@@ -56,9 +56,15 @@ tasks.named('compileJava') {
     options.release = 17
 }
 
+tasks.withType(Test).configureEach {
+    if (jdk17Home) {
+        executable = file("${jdk17Home}/bin/java.exe").absolutePath
+    }
+}
+
 jar {
     archiveBaseName = 'cameo-mcp-bridge'
-    archiveVersion = '2.3.1'
+    archiveVersion = '2.3.2'
     destinationDirectory = layout.buildDirectory.dir('libs')
 }
 

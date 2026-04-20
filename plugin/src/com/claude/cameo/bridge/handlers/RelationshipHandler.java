@@ -43,8 +43,10 @@ import com.sun.net.httpserver.HttpHandler;
 import com.google.gson.JsonObject;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -120,7 +122,7 @@ public class RelationshipHandler implements HttpHandler {
                     relationship = createExtend(ef, source, target);
                     break;
                 case "dependency":
-                    relationship = createDependency(ef, source, target);
+                    relationship = createDependency(ef, project, source, target, ownerId);
                     break;
                 case "association":
                     relationship = createAssociation(ef, source, target, false, false);
@@ -257,14 +259,25 @@ public class RelationshipHandler implements HttpHandler {
         return ext;
     }
 
-    private Dependency createDependency(ElementsFactory ef, Element source, Element target) throws Exception {
+    private Dependency createDependency(
+            ElementsFactory ef,
+            com.nomagic.magicdraw.core.Project project,
+            Element source,
+            Element target,
+            String ownerId) throws Exception {
         if (!(source instanceof NamedElement) || !(target instanceof NamedElement)) {
-            throw new IllegalArgumentException("Dependency requires NamedElement source and target");
+            throw new IllegalArgumentException(
+                    "Dependency requires NamedElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
         }
         Dependency dep = ef.createDependencyInstance();
         dep.getClient().add((NamedElement) source);
         dep.getSupplier().add((NamedElement) target);
-        ModelElementsManager.getInstance().addElement(dep, source);
+        ModelElementsManager.getInstance().addElement(
+                dep,
+                resolvePackagedOwner(project, ownerId, source, "Dependency"));
         return dep;
     }
 
@@ -397,7 +410,10 @@ public class RelationshipHandler implements HttpHandler {
             boolean applyItemFlow) throws Exception {
         if (!(source instanceof NamedElement) || !(target instanceof NamedElement)) {
             throw new IllegalArgumentException(
-                    "InformationFlow requires NamedElement source and target");
+                    "InformationFlow requires NamedElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
         }
 
         Package owner = resolvePackageOwnerFromContext(
@@ -465,16 +481,25 @@ public class RelationshipHandler implements HttpHandler {
             String targetPartWithPortId) throws Exception {
         if (!(source instanceof ConnectableElement) || !(target instanceof ConnectableElement)) {
             throw new IllegalArgumentException(
-                    "Connector requires ConnectableElement source and target");
+                    "Connector requires ConnectableElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
         }
         if (ownerId == null || ownerId.isEmpty()) {
             throw new IllegalArgumentException("Connector requires ownerId");
         }
 
         Element owner = (Element) project.getElementByID(ownerId);
+        if (owner == null) {
+            throw new IllegalArgumentException("Connector ownerId not found: " + ownerId);
+        }
         if (!(owner instanceof StructuredClassifier)) {
             throw new IllegalArgumentException(
-                    "Connector owner must be a StructuredClassifier: " + ownerId);
+                    "Connector owner must be a StructuredClassifier, but resolved to "
+                            + describeElement(owner)
+                            + " from ownerId="
+                            + ownerId);
         }
 
         Connector connector = ef.createConnectorInstance();
@@ -527,7 +552,10 @@ public class RelationshipHandler implements HttpHandler {
             String stereotypeName) throws Exception {
         if (!(source instanceof NamedElement) || !(target instanceof NamedElement)) {
             throw new IllegalArgumentException(
-                    stereotypeName + " requires NamedElement source and target");
+                    stereotypeName + " requires NamedElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
         }
         Abstraction abstraction = ef.createAbstractionInstance();
         abstraction.getClient().add((NamedElement) source);
@@ -548,9 +576,17 @@ public class RelationshipHandler implements HttpHandler {
             String relationshipType) {
         if (ownerId != null && !ownerId.isEmpty()) {
             Element owner = (Element) project.getElementByID(ownerId);
+            if (owner == null) {
+                throw new IllegalArgumentException(
+                        relationshipType + " ownerId not found: " + ownerId);
+            }
             if (!(owner instanceof Package)) {
                 throw new IllegalArgumentException(
-                        relationshipType + " owner must be a Package or Model: " + ownerId);
+                        relationshipType + " owner must be a Package or Model, but resolved to "
+                                + describeElement(owner)
+                                + " from ownerId="
+                                + ownerId
+                                + ". Omit ownerId to infer the containing package from the source.");
             }
             return (Package) owner;
         }
@@ -568,7 +604,11 @@ public class RelationshipHandler implements HttpHandler {
             return model;
         }
         throw new IllegalStateException(
-                "Could not resolve a package owner for " + relationshipType + " relationship");
+                "Could not resolve a package owner for "
+                        + relationshipType
+                        + " relationship starting from source "
+                        + describeElement(source)
+                        + ". Provide ownerId explicitly or ensure the source is contained by a package/model.");
     }
 
     private Package resolvePackageOwnerFromContext(
@@ -597,22 +637,217 @@ public class RelationshipHandler implements HttpHandler {
             return model;
         }
         throw new IllegalStateException(
-                "Could not resolve a containing package for " + relationshipType + " relationship");
+                "Could not resolve a containing package for "
+                        + relationshipType
+                        + " relationship from context "
+                        + describeElement(fallbackContext)
+                        + ". Provide a package ownerId or ensure the context is nested under a package/model.");
     }
 
     private Stereotype requireStereotype(
             com.nomagic.magicdraw.core.Project project,
             String stereotypeName) {
         Collection<Stereotype> allStereotypes = StereotypesHelper.getAllStereotypes(project);
+        List<Stereotype> matches = new ArrayList<>();
         if (allStereotypes != null) {
             for (Stereotype stereotype : allStereotypes) {
                 if (stereotypeName.equalsIgnoreCase(stereotype.getName())) {
-                    return stereotype;
+                    matches.add(stereotype);
                 }
             }
         }
-        throw new IllegalStateException("SysML stereotype not found: " + stereotypeName
-                + ". Ensure the SysML profile is applied to the project.");
+        if (!matches.isEmpty()) {
+            return selectPreferredStereotype(stereotypeName, matches);
+        }
+        throw new IllegalStateException(
+                "SysML stereotype not found: "
+                        + stereotypeName
+                        + ". Preferred contexts: "
+                        + preferredStereotypeContexts(stereotypeName)
+                        + ". Ensure the relevant SysML profile is applied to the project.");
+    }
+
+    static Stereotype selectPreferredStereotype(String stereotypeName, List<Stereotype> matches) {
+        if (matches == null || matches.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No stereotype candidates were provided for " + stereotypeName);
+        }
+        if (matches.size() == 1) {
+            return matches.get(0);
+        }
+
+        List<String> preferredContexts = preferredStereotypeContexts(stereotypeName);
+        int bestRank = Integer.MAX_VALUE;
+        List<Stereotype> bestMatches = new ArrayList<>();
+        for (Stereotype stereotype : matches) {
+            int rank = stereotypePreferenceRank(stereotype, preferredContexts);
+            if (rank < bestRank) {
+                bestRank = rank;
+                bestMatches.clear();
+                bestMatches.add(stereotype);
+            } else if (rank == bestRank) {
+                bestMatches.add(stereotype);
+            }
+        }
+
+        if (bestRank != Integer.MAX_VALUE && bestMatches.size() == 1) {
+            return bestMatches.get(0);
+        }
+
+        throw new IllegalStateException(buildAmbiguousStereotypeMessage(
+                stereotypeName,
+                matches,
+                preferredContexts,
+                bestRank));
+    }
+
+    private static List<String> preferredStereotypeContexts(String stereotypeName) {
+        switch (stereotypeName.toLowerCase()) {
+            case "refine":
+            case "derivereqt":
+            case "satisfy":
+            case "verify":
+            case "trace":
+                return List.of("Requirements", "SysML", "SysMLProfile");
+            case "allocate":
+                return List.of("Allocations", "SysML", "SysMLProfile");
+            case "itemflow":
+                return List.of("PortsAndFlows", "SysML", "SysMLProfile");
+            default:
+                return List.of("SysML", "SysMLProfile", "Requirements");
+        }
+    }
+
+    private static int stereotypePreferenceRank(
+            Stereotype stereotype,
+            List<String> preferredContexts) {
+        List<String> availableContexts = stereotypeContextNames(stereotype);
+        for (int i = 0; i < preferredContexts.size(); i++) {
+            String preferred = normalizeContextToken(preferredContexts.get(i));
+            for (String context : availableContexts) {
+                if (preferred.equals(normalizeContextToken(context))) {
+                    return i;
+                }
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private static List<String> stereotypeContextNames(Stereotype stereotype) {
+        List<String> contexts = new ArrayList<>();
+        if (stereotype != null) {
+            com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile profile = stereotype.getProfile();
+            if (profile != null && profile.getName() != null && !profile.getName().isBlank()) {
+                contexts.add(profile.getName());
+            }
+        }
+        Element current = stereotype;
+        while (current != null) {
+            if (current instanceof NamedElement) {
+                String name = ((NamedElement) current).getName();
+                if (name != null && !name.isBlank()) {
+                    contexts.add(name);
+                }
+            }
+            current = current.getOwner();
+        }
+        return contexts;
+    }
+
+    private static String buildAmbiguousStereotypeMessage(
+            String stereotypeName,
+            List<Stereotype> matches,
+            List<String> preferredContexts,
+            int bestRank) {
+        StringBuilder message = new StringBuilder()
+                .append("Ambiguous stereotype resolution for ")
+                .append(stereotypeName)
+                .append(". ");
+        if (bestRank != Integer.MAX_VALUE && bestRank < preferredContexts.size()) {
+            message.append("Multiple candidates matched preferred context ")
+                    .append(preferredContexts.get(bestRank))
+                    .append(". ");
+        } else {
+            message.append("No candidate matched preferred contexts ")
+                    .append(preferredContexts)
+                    .append(". ");
+        }
+        message.append("Candidates: ");
+        for (int i = 0; i < matches.size(); i++) {
+            if (i > 0) {
+                message.append("; ");
+            }
+            message.append(describeStereotypeCandidate(matches.get(i)));
+        }
+        message.append(". Update the preference mapping or apply the intended SysML profile explicitly.");
+        return message.toString();
+    }
+
+    static String describeElement(Element element) {
+        if (element == null) {
+            return "<null>";
+        }
+
+        String humanType = element.getHumanType();
+        if (humanType == null || humanType.isBlank()) {
+            humanType = element.getClassType() != null
+                    ? element.getClassType().getSimpleName()
+                    : element.getClass().getSimpleName();
+        }
+
+        String humanName = element.getHumanName();
+        if ((humanName == null || humanName.isBlank()) && element instanceof NamedElement) {
+            humanName = ((NamedElement) element).getName();
+        }
+        if (humanName == null || humanName.isBlank()) {
+            humanName = "<unnamed>";
+        }
+
+        String id = element.getID();
+        if (id == null || id.isBlank()) {
+            id = "<no-id>";
+        }
+
+        return humanType + " '" + humanName + "' [id=" + id + "]";
+    }
+
+    private static String describeStereotypeCandidate(Stereotype stereotype) {
+        String profileName = "<no-profile>";
+        if (stereotype != null && stereotype.getProfile() != null) {
+            String name = stereotype.getProfile().getName();
+            if (name != null && !name.isBlank()) {
+                profileName = name;
+            }
+        }
+        return describeElement(stereotype)
+                + " profile="
+                + profileName
+                + " ownerPath="
+                + buildOwnerPath(stereotype);
+    }
+
+    private static String buildOwnerPath(Element element) {
+        List<String> names = new ArrayList<>();
+        Element current = element != null ? element.getOwner() : null;
+        while (current != null) {
+            if (current instanceof NamedElement) {
+                String currentName = ((NamedElement) current).getName();
+                if (currentName != null && !currentName.isBlank()) {
+                    names.add(0, currentName);
+                }
+            }
+            current = current.getOwner();
+        }
+        return names.isEmpty() ? "<root>" : String.join(" > ", names);
+    }
+
+    private static String normalizeContextToken(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.toLowerCase(Locale.ROOT)
+                .replace("&", "and")
+                .replaceAll("[^a-z0-9]", "");
     }
 
 }

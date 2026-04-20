@@ -9,8 +9,16 @@ import com.nomagic.magicdraw.openapi.uml.ModelElementsManager;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralInteger;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralUnlimitedNatural;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.MultiplicityElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Package;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Type;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.TypedElement;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.AggregationKindEnum;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdports.Port;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
 import com.nomagic.uml2.ext.magicdraw.mdusecases.UseCase;
@@ -29,6 +37,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -85,6 +94,16 @@ public class ElementMutationHandler implements HttpHandler {
         String documentation = JsonHelper.optionalString(body, "documentation");
         String behaviorId = JsonHelper.optionalString(body, "behaviorId");
         String representsId = JsonHelper.optionalString(body, "representsId");
+        String typeId = JsonHelper.optionalString(body, "typeId");
+        Integer lower = optionalInteger(body, "lower");
+        Integer upper = optionalUnlimitedInteger(body, "upper");
+        Boolean isOrdered = optionalBoolean(body, "isOrdered");
+        Boolean isUnique = optionalBoolean(body, "isUnique");
+        String aggregation = JsonHelper.optionalString(body, "aggregation");
+        Boolean isBehavior = optionalBoolean(body, "isBehavior");
+        Boolean isConjugated = optionalBoolean(body, "isConjugated");
+        Boolean isService = optionalBoolean(body, "isService");
+        String direction = JsonHelper.optionalString(body, "direction");
         List<String> metaclasses = parseStringList(body, "metaclasses");
 
         JsonObject result = EdtDispatcher.write("Create " + type + " " + name, project -> {
@@ -126,6 +145,20 @@ public class ElementMutationHandler implements HttpHandler {
                     StereotypesHelper.addStereotype(created, stereo);
                 }
             }
+            applyCreationSemantics(
+                    project,
+                    ef,
+                    created,
+                    typeId,
+                    lower,
+                    upper,
+                    isOrdered,
+                    isUnique,
+                    aggregation,
+                    isBehavior,
+                    isConjugated,
+                    isService,
+                    direction);
             if (documentation != null && !documentation.isEmpty()) {
                 Comment comment = ef.createCommentInstance();
                 comment.setBody(documentation);
@@ -607,6 +640,47 @@ public class ElementMutationHandler implements HttpHandler {
         return values;
     }
 
+    private Integer optionalInteger(JsonObject body, String key) {
+        if (!body.has(key) || body.get(key).isJsonNull()) {
+            return null;
+        }
+        try {
+            return body.get(key).getAsInt();
+        } catch (Exception e) {
+            throw new IllegalArgumentException(key + " must be an integer");
+        }
+    }
+
+    private Integer optionalUnlimitedInteger(JsonObject body, String key) {
+        if (!body.has(key) || body.get(key).isJsonNull()) {
+            return null;
+        }
+        JsonElement element = body.get(key);
+        try {
+            if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                String text = element.getAsString().trim();
+                if ("*".equals(text)) {
+                    return -1;
+                }
+                return Integer.parseInt(text);
+            }
+            return element.getAsInt();
+        } catch (Exception e) {
+            throw new IllegalArgumentException(key + " must be an integer or '*'");
+        }
+    }
+
+    private Boolean optionalBoolean(JsonObject body, String key) {
+        if (!body.has(key) || body.get(key).isJsonNull()) {
+            return null;
+        }
+        try {
+            return body.get(key).getAsBoolean();
+        } catch (Exception e) {
+            throw new IllegalArgumentException(key + " must be a boolean");
+        }
+    }
+
     private Collection<com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class> resolveMetaclasses(
             com.nomagic.magicdraw.core.Project project,
             List<String> metaclasses) {
@@ -625,6 +699,155 @@ public class ElementMutationHandler implements HttpHandler {
             resolved.add(metaClass);
         }
         return resolved;
+    }
+
+    private void applyCreationSemantics(
+            com.nomagic.magicdraw.core.Project project,
+            ElementsFactory ef,
+            Element created,
+            String typeId,
+            Integer lower,
+            Integer upper,
+            Boolean isOrdered,
+            Boolean isUnique,
+            String aggregation,
+            Boolean isBehavior,
+            Boolean isConjugated,
+            Boolean isService,
+            String direction) {
+        if (typeId != null) {
+            applyCreatedType(project, created, typeId);
+        }
+        if (lower != null || upper != null || isOrdered != null || isUnique != null) {
+            applyMultiplicity(project, ef, created, lower, upper, isOrdered, isUnique);
+        }
+        if (aggregation != null) {
+            applyAggregation(created, aggregation);
+        }
+        if (isBehavior != null || isConjugated != null || isService != null) {
+            applyPortFlags(created, isBehavior, isConjugated, isService);
+        }
+        if (direction != null) {
+            applyFlowPropertyDirection(project, created, direction);
+        }
+    }
+
+    private void applyCreatedType(
+            com.nomagic.magicdraw.core.Project project,
+            Element created,
+            String typeId) {
+        if (!(created instanceof TypedElement)) {
+            throw new IllegalArgumentException(
+                    "typeId is only supported for TypedElement instances: " + created.getHumanType());
+        }
+        Element resolved = (Element) project.getElementByID(typeId);
+        if (!(resolved instanceof Type)) {
+            throw new IllegalArgumentException("Type element not found or not a Type: " + typeId);
+        }
+        ((TypedElement) created).setType((Type) resolved);
+    }
+
+    private void applyMultiplicity(
+            com.nomagic.magicdraw.core.Project project,
+            ElementsFactory ef,
+            Element created,
+            Integer lower,
+            Integer upper,
+            Boolean isOrdered,
+            Boolean isUnique) {
+        if (!(created instanceof MultiplicityElement)) {
+            throw new IllegalArgumentException(
+                    "Multiplicity fields are only supported for MultiplicityElement instances: "
+                            + created.getHumanType());
+        }
+        MultiplicityElement multiplicityElement = (MultiplicityElement) created;
+        if (lower != null) {
+            if (lower < 0) {
+                throw new IllegalArgumentException("lower must be zero or greater");
+            }
+            LiteralInteger lowerValue = ef.createLiteralIntegerInstance();
+            lowerValue.setValue(lower);
+            multiplicityElement.setLowerValue(lowerValue);
+        }
+        if (upper != null) {
+            if (upper < 0) {
+                LiteralUnlimitedNatural upperValue = ef.createLiteralUnlimitedNaturalInstance();
+                upperValue.setValue(-1);
+                multiplicityElement.setUpperValue(upperValue);
+            } else {
+                LiteralUnlimitedNatural upperValue = ef.createLiteralUnlimitedNaturalInstance();
+                upperValue.setValue(upper);
+                multiplicityElement.setUpperValue(upperValue);
+            }
+        }
+        if (isOrdered != null) {
+            multiplicityElement.setOrdered(isOrdered);
+        }
+        if (isUnique != null) {
+            multiplicityElement.setUnique(isUnique);
+        }
+    }
+
+    private void applyAggregation(Element created, String aggregation) {
+        if (!(created instanceof Property)) {
+            throw new IllegalArgumentException(
+                    "aggregation is only supported for Property instances: " + created.getHumanType());
+        }
+        AggregationKindEnum resolved = AggregationKindEnum.getByName(aggregation.toLowerCase());
+        if (resolved == null) {
+            resolved = AggregationKindEnum.get(aggregation.toLowerCase());
+        }
+        if (resolved == null) {
+            throw new IllegalArgumentException(
+                    "Unsupported aggregation value: " + aggregation + ". Expected none, shared, or composite.");
+        }
+        ((Property) created).setAggregation(resolved);
+    }
+
+    private void applyPortFlags(
+            Element created,
+            Boolean isBehavior,
+            Boolean isConjugated,
+            Boolean isService) {
+        if (!(created instanceof Port)) {
+            throw new IllegalArgumentException(
+                    "Port flags are only supported for Port instances: " + created.getHumanType());
+        }
+        Port port = (Port) created;
+        if (isBehavior != null) {
+            port.setBehavior(isBehavior);
+        }
+        if (isConjugated != null) {
+            port.setConjugated(isConjugated);
+        }
+        if (isService != null) {
+            port.setService(isService);
+        }
+    }
+
+    private void applyFlowPropertyDirection(
+            com.nomagic.magicdraw.core.Project project,
+            Element created,
+            String direction) {
+        if (!(created instanceof Property)) {
+            throw new IllegalArgumentException(
+                    "direction is only supported for Property / FlowProperty instances: "
+                            + created.getHumanType());
+        }
+        Stereotype flowPropertyStereo = getFlowPropertyStereotype(created);
+        if (flowPropertyStereo == null) {
+            throw new IllegalArgumentException(
+                    "direction requires the FlowProperty stereotype to be applied");
+        }
+        StereotypesHelper.setStereotypePropertyValue(
+                created,
+                flowPropertyStereo,
+                "direction",
+                TaggedValueCoercion.coerceForTag(
+                        project,
+                        flowPropertyStereo,
+                        "direction",
+                        new JsonPrimitive(direction)));
     }
 
     private Object coerceJsonValue(JsonElement value) {
@@ -650,6 +873,14 @@ public class ElementMutationHandler implements HttpHandler {
             return primitive.getAsNumber();
         }
         return primitive.getAsString();
+    }
+
+    private Stereotype getFlowPropertyStereotype(Element element) {
+        Stereotype applied = StereotypesHelper.getAppliedStereotypeByString(element, "FlowProperty");
+        if (applied != null) {
+            return applied;
+        }
+        return StereotypesHelper.getAppliedStereotypeByString(element, "flowProperty");
     }
 
     private JsonArray toJsonArray(
@@ -708,15 +939,62 @@ public class ElementMutationHandler implements HttpHandler {
                 if (stereo != null) return stereo;
             }
         }
+        List<Stereotype> matches = new ArrayList<>();
         Collection<Stereotype> allStereotypes = StereotypesHelper.getAllStereotypes(project);
         if (allStereotypes != null) {
             for (Stereotype st : allStereotypes) {
                 if (stereotypeName.equalsIgnoreCase(st.getName())) {
-                    return st;
+                    matches.add(st);
                 }
             }
         }
-        return null;
+        if (matches.isEmpty()) {
+            return null;
+        }
+        for (String preferredContext : preferredStereotypeContexts(stereotypeName)) {
+            for (Stereotype stereotype : matches) {
+                if (ownerChainContains(stereotype, preferredContext)) {
+                    return stereotype;
+                }
+            }
+        }
+        return matches.get(0);
+    }
+
+    private List<String> preferredStereotypeContexts(String stereotypeName) {
+        switch (stereotypeName.toLowerCase()) {
+            case "refine":
+            case "derivereqt":
+            case "satisfy":
+            case "verify":
+            case "trace":
+                return List.of("Requirements", "SysML", "SysML Profile");
+            case "allocate":
+            case "itemflow":
+            case "flowproperty":
+            case "block":
+            case "requirement":
+            case "interfaceblock":
+            case "constraintblock":
+            case "valuetype":
+                return List.of("SysML", "SysML Profile", "Requirements");
+            default:
+                return List.of("SysML", "SysML Profile", "Requirements");
+        }
+    }
+
+    private boolean ownerChainContains(Element element, String ownerName) {
+        Element current = element;
+        while (current != null) {
+            if (current instanceof NamedElement) {
+                String currentName = ((NamedElement) current).getName();
+                if (currentName != null && ownerName.equalsIgnoreCase(currentName)) {
+                    return true;
+                }
+            }
+            current = current.getOwner();
+        }
+        return false;
     }
 
 }

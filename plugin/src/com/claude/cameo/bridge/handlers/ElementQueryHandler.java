@@ -382,6 +382,7 @@ public class ElementQueryHandler implements HttpHandler {
             }
 
             JsonArray undirected = new JsonArray();
+            Set<String> undirectedRelationshipIds = new HashSet<>();
             try {
                 Collection<Relationship> allRels = element.get_relationshipOfRelatedElement();
                 if (allRels != null) {
@@ -389,7 +390,9 @@ public class ElementQueryHandler implements HttpHandler {
                         if (rel instanceof DirectedRelationship) {
                             continue;
                         }
-                        undirected.add(serializeUndirectedRelationship(rel, elementId));
+                        if (rel != null && undirectedRelationshipIds.add(rel.getID())) {
+                            undirected.add(serializeUndirectedRelationship(rel, elementId));
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -402,7 +405,9 @@ public class ElementQueryHandler implements HttpHandler {
                             Connectors.collectDirectConnectors((ConnectableElement) element);
                     if (connectors != null) {
                         for (Connector connector : connectors) {
-                            undirected.add(serializeConnector(connector, elementId));
+                            if (connector != null && undirectedRelationshipIds.add(connector.getID())) {
+                                undirected.add(serializeConnector(connector, elementId));
+                            }
                         }
                     }
                 }
@@ -515,13 +520,13 @@ public class ElementQueryHandler implements HttpHandler {
 
         JsonArray sources = new JsonArray();
         if (edge.getSource() != null) {
-            sources.add(ElementSerializer.toJsonCompact(edge.getSource()));
+            sources.add(ElementSerializer.toJsonReference(edge.getSource()));
         }
         json.add("sources", sources);
 
         JsonArray targets = new JsonArray();
         if (edge.getTarget() != null) {
-            targets.add(ElementSerializer.toJsonCompact(edge.getTarget()));
+            targets.add(ElementSerializer.toJsonReference(edge.getTarget()));
         }
         json.add("targets", targets);
 
@@ -539,6 +544,8 @@ public class ElementQueryHandler implements HttpHandler {
         } catch (Exception e) {
             json.addProperty("type", rel.getHumanType());
         }
+        json.addProperty("humanType", rel.getHumanType());
+        appendRelationshipMetadata(json, rel);
 
         if (rel instanceof NamedElement) {
             String name = ((NamedElement) rel).getName();
@@ -548,16 +555,10 @@ public class ElementQueryHandler implements HttpHandler {
         }
 
         JsonArray relatedElements = new JsonArray();
+        Set<String> relatedElementIds = new HashSet<>();
         try {
             for (Element related : rel.getRelatedElement()) {
-                if (!related.getID().equals(selfId)) {
-                    JsonObject relJson = new JsonObject();
-                    relJson.addProperty("id", related.getID());
-                    if (related instanceof NamedElement) {
-                        relJson.addProperty("name", ((NamedElement) related).getName());
-                    }
-                    relatedElements.add(relJson);
-                }
+                appendRelatedElement(relatedElements, relatedElementIds, related, selfId);
             }
         } catch (Exception e) {
             LOG.log(Level.FINE, "Error reading related elements", e);
@@ -577,6 +578,16 @@ public class ElementQueryHandler implements HttpHandler {
         Element owner = relationship.getOwner();
         if (owner != null) {
             json.addProperty("ownerId", owner.getID());
+            if (owner instanceof NamedElement) {
+                String ownerName = ((NamedElement) owner).getName();
+                if (ownerName != null && !ownerName.isEmpty()) {
+                    json.addProperty("ownerName", ownerName);
+                }
+            }
+            String ownerType = owner.getHumanType();
+            if (ownerType != null && !ownerType.isEmpty()) {
+                json.addProperty("ownerType", ownerType);
+            }
         }
         try {
             List<Stereotype> stereotypes = StereotypesHelper.getStereotypes(relationship);
@@ -594,13 +605,28 @@ public class ElementQueryHandler implements HttpHandler {
 
     private void appendInformationFlowFields(JsonObject json, InformationFlow informationFlow) {
         json.add(
+                "informationSources",
+                serializeElementsSafe(
+                        informationFlow.getInformationSource(),
+                        "information flow sources"));
+        json.add(
+                "informationTargets",
+                serializeElementsSafe(
+                        informationFlow.getInformationTarget(),
+                        "information flow targets"));
+        json.add(
                 "conveyed",
                 serializeElementsSafe(informationFlow.getConveyed(), "information flow conveyed"));
         json.add(
                 "realizingConnectors",
-                serializeElementsSafe(
+                serializeConnectorReferences(
                         informationFlow.getRealizingConnector(),
                         "information flow realizing connectors"));
+        JsonArray realizingConnectorDetails = serializeConnectorDetails(
+                informationFlow.getRealizingConnector());
+        if (realizingConnectorDetails.size() > 0) {
+            json.add("realizingConnectorDetails", realizingConnectorDetails);
+        }
         try {
             Stereotype itemFlow = StereotypesHelper.getAppliedStereotypeByString(
                     informationFlow,
@@ -611,7 +637,7 @@ public class ElementQueryHandler implements HttpHandler {
                         itemFlow,
                         "itemProperty");
                 if (itemProperty instanceof Element) {
-                    json.add("itemProperty", ElementSerializer.toJsonCompact((Element) itemProperty));
+                    json.add("itemProperty", ElementSerializer.toJsonReference((Element) itemProperty));
                 }
             }
         } catch (Exception e) {
@@ -622,20 +648,15 @@ public class ElementQueryHandler implements HttpHandler {
     private JsonArray serializeElementsSafe(
             Collection<? extends Element> elements,
             String label) {
-        JsonArray serialized = new JsonArray();
         try {
             if (elements == null) {
-                return serialized;
+                return new JsonArray();
             }
-            for (Element element : elements) {
-                if (element != null) {
-                    serialized.add(ElementSerializer.toJsonCompact(element));
-                }
-            }
+            return ElementSerializer.toJsonReferenceArray(elements);
         } catch (Exception e) {
             LOG.log(Level.FINE, "Error reading " + label, e);
+            return new JsonArray();
         }
-        return serialized;
     }
 
     private JsonObject serializeConnector(Connector connector, String selfId) {
@@ -643,6 +664,8 @@ public class ElementQueryHandler implements HttpHandler {
         json.addProperty("relationshipId", connector.getID());
         json.addProperty("direction", "undirected");
         json.addProperty("type", "Connector");
+        json.addProperty("humanType", connector.getHumanType());
+        appendRelationshipMetadata(json, connector);
 
         if (connector instanceof NamedElement) {
             String name = ((NamedElement) connector).getName();
@@ -652,71 +675,144 @@ public class ElementQueryHandler implements HttpHandler {
         }
 
         JsonArray relatedElements = new JsonArray();
+        JsonArray connectorEnds = new JsonArray();
+        JsonArray selfEnds = new JsonArray();
+        JsonArray otherEnds = new JsonArray();
+        Set<String> relatedElementIds = new HashSet<>();
         try {
             Collection<ConnectorEnd> ends = connector.getEnd();
             if (ends != null) {
                 for (ConnectorEnd end : ends) {
-                    ConnectableElement role = end.getRole();
-                    if (role == null || selfId.equals(role.getID())) {
+                    if (end == null) {
                         continue;
                     }
-                    JsonObject relJson = new JsonObject();
-                    relJson.addProperty("id", role.getID());
-                    if (role instanceof NamedElement) {
-                        relJson.addProperty("name", ((NamedElement) role).getName());
+
+                    JsonObject endJson = ElementSerializer.toJsonConnectorEnd(end);
+                    ConnectableElement role = end.getRole();
+                    Property partWithPort = end.getPartWithPort();
+                    boolean matchesQueriedElement =
+                            matchesElement(selfId, role) || matchesElement(selfId, partWithPort);
+                    endJson.addProperty("matchesQueriedElement", matchesQueriedElement);
+                    connectorEnds.add(endJson);
+
+                    if (matchesQueriedElement) {
+                        selfEnds.add(endJson.deepCopy());
+                    } else {
+                        otherEnds.add(endJson.deepCopy());
                     }
-                    relatedElements.add(relJson);
+
+                    appendRelatedElement(relatedElements, relatedElementIds, role, selfId);
+                    appendRelatedElement(relatedElements, relatedElementIds, partWithPort, selfId);
                 }
             }
         } catch (Exception e) {
             LOG.log(Level.FINE, "Error reading connector ends", e);
         }
         json.add("relatedElements", relatedElements);
+        if (connectorEnds.size() > 0) {
+            json.add("connectorEnds", connectorEnds);
+            json.addProperty("endCount", connectorEnds.size());
+        }
+        if (selfEnds.size() > 0) {
+            json.add("selfEnds", selfEnds);
+        }
+        if (otherEnds.size() > 0) {
+            json.add("otherEnds", otherEnds);
+        }
+
+        JsonArray realizingInformationFlows = serializeElementsSafe(
+                readElementCollection(
+                        connector,
+                        "get_informationFlowOfRealizingConnector",
+                        "getInformationFlowOfRealizingConnector"),
+                "connector realizing information flows");
+        if (realizingInformationFlows.size() > 0) {
+            json.add("realizingInformationFlows", realizingInformationFlows);
+        }
         return json;
     }
 
-    private Stereotype getFlowPropertyStereotype(Property property) {
+    private JsonArray serializeConnectorReferences(
+            Collection<Connector> connectors,
+            String label) {
+        JsonArray serialized = new JsonArray();
         try {
-            Stereotype flowPropertyStereo = StereotypesHelper.getAppliedStereotypeByString(
-                    property,
-                    "FlowProperty");
-            if (flowPropertyStereo == null) {
-                flowPropertyStereo = StereotypesHelper.getAppliedStereotypeByString(
-                        property,
-                        "flowProperty");
+            if (connectors == null) {
+                return serialized;
             }
-            return flowPropertyStereo;
+            for (Connector connector : connectors) {
+                if (connector != null) {
+                    serialized.add(ElementSerializer.toJsonReference(connector));
+                }
+            }
         } catch (Exception e) {
-            LOG.log(Level.FINE, "Error reading flow property stereotype", e);
-            return null;
+            LOG.log(Level.FINE, "Error reading " + label, e);
         }
+        return serialized;
+    }
+
+    private JsonArray serializeConnectorDetails(Collection<Connector> connectors) {
+        JsonArray details = new JsonArray();
+        if (connectors == null) {
+            return details;
+        }
+        for (Connector connector : connectors) {
+            if (connector != null) {
+                details.add(serializeConnector(connector, null));
+            }
+        }
+        return details;
+    }
+
+    private Stereotype getFlowPropertyStereotype(Property property) {
+        return ElementSerializer.getFlowPropertyStereotype(property);
+    }
+
+    private void appendRelatedElement(
+            JsonArray relatedElements,
+            Set<String> relatedElementIds,
+            Element related,
+            String selfId) {
+        if (related == null) {
+            return;
+        }
+        if (selfId != null && selfId.equals(related.getID())) {
+            return;
+        }
+        if (!relatedElementIds.add(related.getID())) {
+            return;
+        }
+        relatedElements.add(ElementSerializer.toJsonReference(related));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Collection<? extends Element> readElementCollection(
+            Object target,
+            String... methodNames) {
+        if (target == null || methodNames == null) {
+            return List.of();
+        }
+        for (String methodName : methodNames) {
+            try {
+                Method method = target.getClass().getMethod(methodName);
+                Object value = method.invoke(target);
+                if (value instanceof Collection<?>) {
+                    return (Collection<? extends Element>) value;
+                }
+            } catch (Exception e) {
+                // Try the next candidate method name.
+            }
+        }
+        return List.of();
+    }
+
+    private boolean matchesElement(String selfId, Element element) {
+        return selfId != null && element != null && selfId.equals(element.getID());
     }
 
     private String readFlowPropertyDirection(Property property, Stereotype flowPropertyStereo) {
         try {
-            Object direction = StereotypesHelper.getStereotypePropertyFirst(
-                    property,
-                    flowPropertyStereo,
-                    "direction");
-            if (direction == null) {
-                return null;
-            }
-            if (direction instanceof Enum<?>) {
-                return ((Enum<?>) direction).name();
-            }
-            try {
-                Method getName = direction.getClass().getMethod("getName");
-                Object name = getName.invoke(direction);
-                if (name != null) {
-                    String text = String.valueOf(name).trim();
-                    if (!text.isEmpty()) {
-                        return text;
-                    }
-                }
-            } catch (Exception ignored) {
-                // Fall back to String.valueOf below.
-            }
-            return String.valueOf(direction);
+            return ElementSerializer.readFlowPropertyDirection(property, flowPropertyStereo);
         } catch (Exception e) {
             LOG.log(Level.FINE, "Error reading flow property direction", e);
             return null;

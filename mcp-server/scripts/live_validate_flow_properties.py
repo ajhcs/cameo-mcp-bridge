@@ -218,7 +218,7 @@ async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
         )
         _expect(
             required_capabilities.issubset(capability_names),
-            "Running bridge does not expose the assignment workflow endpoints",
+            "Running bridge does not expose the required workflow endpoints",
         )
         _append_check(
             report,

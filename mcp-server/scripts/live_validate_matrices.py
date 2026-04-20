@@ -6,7 +6,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 HERE = Path(__file__).resolve()
 MCP_SERVER_DIR = HERE.parents[1]
@@ -33,6 +33,27 @@ def _append_check(report: dict[str, Any], name: str, ok: bool, details: Any) -> 
 def _expect(condition: bool, message: str) -> None:
     if not condition:
         raise ValidationError(message)
+
+
+def _error_details(exc: Exception) -> dict[str, Any]:
+    return {
+        "type": type(exc).__name__,
+        "message": str(exc),
+    }
+
+
+async def _run_validation_check(
+    report: dict[str, Any],
+    name: str,
+    operation: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    try:
+        details = await operation()
+    except Exception as exc:
+        _append_check(report, name, False, _error_details(exc))
+        return None
+    _append_check(report, name, True, details)
+    return details
 
 
 async def _create_element(
@@ -87,6 +108,18 @@ def _element_ids(items: list[dict[str, Any]]) -> set[str]:
         for item in items
         if isinstance(item, dict) and item.get("id")
     }
+
+
+def _dependency_names(matrix: dict[str, Any]) -> list[str]:
+    return sorted(
+        {
+            dependency.get("name")
+            for cell in matrix.get("populatedCells", [])
+            if isinstance(cell, dict)
+            for dependency in cell.get("dependencies", [])
+            if isinstance(dependency, dict) and dependency.get("name")
+        }
+    )
 
 
 async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
@@ -186,39 +219,22 @@ async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
 
         block_a = await _create_element("Block", "MatrixBlockA", validation_package_id, report)
         block_b = await _create_element("Block", "MatrixBlockB", validation_package_id, report)
-        value_type = await _create_element("ValueType", "MatrixValueType", validation_package_id, report)
-        mission_usecase = await _create_element("UseCase", "Mission Validation Use Case", validation_package_id, report)
-        mission_metric = await _create_element("Property", "missionMetric", block_a["id"], report)
+        activity_a = await _create_element("Activity", "Matrix Activity A", validation_package_id, report)
+        activity_b = await _create_element("Activity", "Matrix Activity B", validation_package_id, report)
         requirement_a = await _create_element("Requirement", "Matrix Requirement A", validation_package_id, report)
         requirement_b = await _create_element("Requirement", "Matrix Requirement B", validation_package_id, report)
-        await client.set_specification(
-            mission_metric["id"],
-            properties={"type": {"id": value_type["id"]}},
-        )
 
         refine_1 = await client.create_relationship(
             type="Refine",
-            source_id=block_a["id"],
+            source_id=activity_a["id"],
             target_id=requirement_a["id"],
-            name="refine_block_a_req_a",
+            name="refine_activity_a_req_a",
         )
         refine_2 = await client.create_relationship(
             type="Refine",
-            source_id=block_b["id"],
+            source_id=activity_b["id"],
             target_id=requirement_b["id"],
-            name="refine_block_b_req_b",
-        )
-        refine_3 = await client.create_relationship(
-            type="Refine",
-            source_id=mission_usecase["id"],
-            target_id=requirement_a["id"],
-            name="refine_usecase_req_a",
-        )
-        refine_4 = await client.create_relationship(
-            type="Refine",
-            source_id=mission_metric["id"],
-            target_id=requirement_b["id"],
-            name="refine_metric_req_b",
+            name="refine_activity_b_req_b",
         )
         derive = await client.create_relationship(
             type="Derive",
@@ -226,13 +242,25 @@ async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
             target_id=requirement_a["id"],
             name="derive_req_b_req_a",
         )
+        allocate = await client.create_relationship(
+            type="Allocate",
+            source_id=block_a["id"],
+            target_id=block_b["id"],
+            name="allocate_block_a_block_b",
+        )
+        satisfy = await client.create_relationship(
+            type="Satisfy",
+            source_id=block_b["id"],
+            target_id=requirement_a["id"],
+            name="satisfy_block_b_req_a",
+        )
         report["artifacts"]["refineRelationshipIds"] = [
             refine_1["relationship"]["id"],
             refine_2["relationship"]["id"],
-            refine_3["relationship"]["id"],
-            refine_4["relationship"]["id"],
         ]
         report["artifacts"]["deriveRelationshipId"] = derive["relationship"]["id"]
+        report["artifacts"]["allocateRelationshipId"] = allocate["relationship"]["id"]
+        report["artifacts"]["satisfyRelationshipId"] = satisfy["relationship"]["id"]
         _append_check(
             report,
             "seed-relationships-created",
@@ -240,179 +268,216 @@ async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
             {
                 "refineIds": report["artifacts"]["refineRelationshipIds"],
                 "deriveId": report["artifacts"]["deriveRelationshipId"],
+                "allocateId": report["artifacts"]["allocateRelationshipId"],
+                "satisfyId": report["artifacts"]["satisfyRelationshipId"],
             },
         )
 
-        refine_matrix_result = await client.create_matrix(
-            kind="Refine Requirement Matrix",
-            parent_id=validation_package_id,
-            name="Validation Refine Matrix",
-            scope_id=validation_package_id,
-        )
-        refine_matrix = refine_matrix_result["matrix"]
-        refine_matrix_id = refine_matrix["id"]
-        report["artifacts"]["refineMatrixId"] = refine_matrix_id
-        _expect(refine_matrix["kind"] == "refine", "Refine matrix returned the wrong kind")
-        _expect(refine_matrix["matrixType"] == "Refine Requirement Matrix", "Wrong native refine matrix type")
-        _expect(refine_matrix["rowCount"] >= 2, "Refine matrix did not include expected block rows")
-        _expect(refine_matrix["columnCount"] >= 2, "Refine matrix did not include expected requirement columns")
-        _expect(refine_matrix["populatedCellCount"] >= 2, "Refine matrix did not populate expected cells")
-        refine_row_ids = _element_ids(refine_matrix.get("rows", []))
-        refine_column_ids = _element_ids(refine_matrix.get("columns", []))
-        _expect(block_a["id"] in refine_row_ids and block_b["id"] in refine_row_ids, "Refine matrix rows missed blocks")
-        _expect(
-            requirement_a["id"] in refine_column_ids and requirement_b["id"] in refine_column_ids,
-            "Refine matrix columns missed requirements",
-        )
-        refine_verification = await mcp_server.cameo_verify_matrix_consistency(
-            refine_matrix_id,
-            expected_row_ids=[block_a["id"], block_b["id"]],
-            expected_column_ids=[requirement_a["id"], requirement_b["id"]],
-            expected_dependency_names=["Refine"],
-            min_populated_cell_count=2,
-        )
-        _expect(
-            refine_verification.get("ok") is True,
-            "Refine matrix consistency verification failed",
-        )
-        _append_check(
-            report,
-            "refine-matrix-create-readback",
-            True,
-            {
+        async def validate_refine_matrix() -> dict[str, Any]:
+            refine_matrix_result = await client.create_matrix(
+                kind="Refine Requirement Matrix",
+                parent_id=validation_package_id,
+                name="Validation Refine Matrix",
+                scope_id=validation_package_id,
+                row_types=["Activity"],
+                column_types=["Requirement"],
+            )
+            refine_matrix = refine_matrix_result["matrix"]
+            refine_matrix_id = refine_matrix["id"]
+            report["artifacts"]["refineMatrixId"] = refine_matrix_id
+            _expect(refine_matrix["kind"] == "refine", "Refine matrix returned the wrong kind")
+            _expect(refine_matrix["matrixType"] == "Refine Requirement Matrix", "Wrong native refine matrix type")
+            _expect(refine_matrix["rowCount"] >= 2, "Refine matrix did not include expected activity rows")
+            _expect(refine_matrix["columnCount"] >= 2, "Refine matrix did not include expected requirement columns")
+            _expect(refine_matrix["populatedCellCount"] >= 2, "Refine matrix did not populate expected cells")
+            refine_row_ids = _element_ids(refine_matrix.get("rows", []))
+            refine_column_ids = _element_ids(refine_matrix.get("columns", []))
+            _expect(
+                activity_a["id"] in refine_row_ids and activity_b["id"] in refine_row_ids,
+                "Refine matrix rows missed activities",
+            )
+            _expect(
+                requirement_a["id"] in refine_column_ids and requirement_b["id"] in refine_column_ids,
+                "Refine matrix columns missed requirements",
+            )
+            refine_verification = await mcp_server.cameo_verify_matrix_consistency(
+                refine_matrix_id,
+                expected_row_ids=[activity_a["id"], activity_b["id"]],
+                expected_column_ids=[requirement_a["id"], requirement_b["id"]],
+                min_populated_cell_count=2,
+            )
+            _expect(refine_verification.get("ok") is True, "Refine matrix consistency verification failed")
+            return {
                 "matrixId": refine_matrix_id,
                 "rowCount": refine_matrix["rowCount"],
                 "columnCount": refine_matrix["columnCount"],
                 "populatedCellCount": refine_matrix["populatedCellCount"],
+                "dependencyNames": _dependency_names(refine_matrix),
                 "verification": refine_verification,
-            },
-        )
+            }
 
-        flexible_refine_result = await client.create_matrix(
-            kind="Refine Requirement Matrix",
-            parent_id=validation_package_id,
-            name="Validation Mission Refine Matrix",
-            scope_id=validation_package_id,
-            row_types=["UseCase", "Property"],
-            column_types=["Requirement"],
-        )
-        flexible_refine = flexible_refine_result["matrix"]
-        flexible_refine_id = flexible_refine["id"]
-        report["artifacts"]["flexibleRefineMatrixId"] = flexible_refine_id
-        flexible_row_ids = _element_ids(flexible_refine.get("rows", []))
-        flexible_column_ids = _element_ids(flexible_refine.get("columns", []))
-        _expect(
-            mission_usecase["id"] in flexible_row_ids,
-            "Flexible refine matrix missed the UseCase row domain",
-        )
-        _expect(
-            mission_metric["id"] in flexible_row_ids,
-            "Flexible refine matrix missed the Property row domain",
-        )
-        _expect(
-            requirement_a["id"] in flexible_column_ids and requirement_b["id"] in flexible_column_ids,
-            "Flexible refine matrix columns missed requirements",
-        )
-        _expect(
-            flexible_refine["populatedCellCount"] >= 2,
-            "Flexible refine matrix did not populate mission-artifact refine cells",
-        )
-        flexible_refine_verification = await mcp_server.cameo_verify_matrix_consistency(
-            flexible_refine_id,
-            expected_row_ids=[mission_usecase["id"], mission_metric["id"]],
-            expected_column_ids=[requirement_a["id"], requirement_b["id"]],
-            expected_dependency_names=["Refine"],
-            min_populated_cell_count=2,
-        )
-        _expect(
-            flexible_refine_verification.get("ok") is True,
-            "Flexible refine matrix consistency verification failed",
-        )
-        _append_check(
-            report,
-            "refine-matrix-custom-row-types",
-            True,
-            {
-                "matrixId": flexible_refine_id,
-                "rowCount": flexible_refine["rowCount"],
-                "columnCount": flexible_refine["columnCount"],
-                "populatedCellCount": flexible_refine["populatedCellCount"],
-                "verification": flexible_refine_verification,
-            },
-        )
-
-        derive_matrix_result = await client.create_matrix(
-            kind="Derive Requirement Matrix",
-            parent_id=validation_package_id,
-            name="Validation Derive Matrix",
-            scope_id=validation_package_id,
-        )
-        derive_matrix = derive_matrix_result["matrix"]
-        derive_matrix_id = derive_matrix["id"]
-        report["artifacts"]["deriveMatrixId"] = derive_matrix_id
-        _expect(derive_matrix["kind"] == "derive", "Derive matrix returned the wrong kind")
-        _expect(derive_matrix["matrixType"] == "Derive Requirement Matrix", "Wrong native derive matrix type")
-        _expect(derive_matrix["rowCount"] >= 2, "Derive matrix did not include expected requirement rows")
-        _expect(derive_matrix["columnCount"] >= 2, "Derive matrix did not include expected requirement columns")
-        _expect(derive_matrix["populatedCellCount"] >= 1, "Derive matrix did not populate expected cells")
-        derive_row_ids = _element_ids(derive_matrix.get("rows", []))
-        derive_column_ids = _element_ids(derive_matrix.get("columns", []))
-        _expect(
-            requirement_a["id"] in derive_row_ids and requirement_b["id"] in derive_row_ids,
-            "Derive matrix rows missed requirements",
-        )
-        _expect(
-            requirement_a["id"] in derive_column_ids and requirement_b["id"] in derive_column_ids,
-            "Derive matrix columns missed requirements",
-        )
-        derive_verification = await mcp_server.cameo_verify_matrix_consistency(
-            derive_matrix_id,
-            expected_row_ids=[requirement_a["id"], requirement_b["id"]],
-            expected_column_ids=[requirement_a["id"], requirement_b["id"]],
-            expected_dependency_names=["DeriveReqt"],
-            min_populated_cell_count=1,
-        )
-        _expect(
-            derive_verification.get("ok") is True,
-            "Derive matrix consistency verification failed",
-        )
-        _append_check(
-            report,
-            "derive-matrix-create-readback",
-            True,
-            {
+        async def validate_derive_matrix() -> dict[str, Any]:
+            derive_matrix_result = await client.create_matrix(
+                kind="Derive Requirement Matrix",
+                parent_id=validation_package_id,
+                name="Validation Derive Matrix",
+                scope_id=validation_package_id,
+            )
+            derive_matrix = derive_matrix_result["matrix"]
+            derive_matrix_id = derive_matrix["id"]
+            report["artifacts"]["deriveMatrixId"] = derive_matrix_id
+            _expect(derive_matrix["kind"] == "derive", "Derive matrix returned the wrong kind")
+            _expect(derive_matrix["matrixType"] == "Derive Requirement Matrix", "Wrong native derive matrix type")
+            _expect(derive_matrix["rowCount"] >= 2, "Derive matrix did not include expected requirement rows")
+            _expect(derive_matrix["columnCount"] >= 2, "Derive matrix did not include expected requirement columns")
+            _expect(derive_matrix["populatedCellCount"] >= 1, "Derive matrix did not populate expected cells")
+            derive_row_ids = _element_ids(derive_matrix.get("rows", []))
+            derive_column_ids = _element_ids(derive_matrix.get("columns", []))
+            _expect(
+                requirement_a["id"] in derive_row_ids and requirement_b["id"] in derive_row_ids,
+                "Derive matrix rows missed requirements",
+            )
+            _expect(
+                requirement_a["id"] in derive_column_ids and requirement_b["id"] in derive_column_ids,
+                "Derive matrix columns missed requirements",
+            )
+            derive_verification = await mcp_server.cameo_verify_matrix_consistency(
+                derive_matrix_id,
+                expected_row_ids=[requirement_a["id"], requirement_b["id"]],
+                expected_column_ids=[requirement_a["id"], requirement_b["id"]],
+                min_populated_cell_count=1,
+            )
+            _expect(derive_verification.get("ok") is True, "Derive matrix consistency verification failed")
+            return {
                 "matrixId": derive_matrix_id,
                 "rowCount": derive_matrix["rowCount"],
                 "columnCount": derive_matrix["columnCount"],
                 "populatedCellCount": derive_matrix["populatedCellCount"],
+                "dependencyNames": _dependency_names(derive_matrix),
                 "verification": derive_verification,
-            },
+            }
+
+        async def validate_satisfy_matrix() -> dict[str, Any]:
+            satisfy_matrix_result = await client.create_matrix(
+                kind="Satisfy Requirement Matrix",
+                parent_id=validation_package_id,
+                name="Validation Satisfy Matrix",
+                scope_id=validation_package_id,
+            )
+            satisfy_matrix = satisfy_matrix_result["matrix"]
+            satisfy_matrix_id = satisfy_matrix["id"]
+            report["artifacts"]["satisfyMatrixId"] = satisfy_matrix_id
+            _expect(satisfy_matrix["kind"] == "satisfy", "Satisfy matrix returned the wrong kind")
+            _expect(
+                satisfy_matrix["matrixType"] == "Satisfy Requirement Matrix",
+                "Wrong native satisfy matrix type",
+            )
+            _expect(satisfy_matrix["rowCount"] >= 2, "Satisfy matrix did not include expected block rows")
+            _expect(satisfy_matrix["columnCount"] >= 2, "Satisfy matrix did not include expected requirement columns")
+            _expect(satisfy_matrix["populatedCellCount"] >= 1, "Satisfy matrix did not populate expected cells")
+            satisfy_row_ids = _element_ids(satisfy_matrix.get("rows", []))
+            satisfy_column_ids = _element_ids(satisfy_matrix.get("columns", []))
+            _expect(block_b["id"] in satisfy_row_ids, "Satisfy matrix rows missed the satisfying block")
+            _expect(requirement_a["id"] in satisfy_column_ids, "Satisfy matrix columns missed the satisfied requirement")
+            satisfy_verification = await mcp_server.cameo_verify_matrix_consistency(
+                satisfy_matrix_id,
+                expected_row_ids=[block_a["id"], block_b["id"]],
+                expected_column_ids=[requirement_a["id"], requirement_b["id"]],
+                min_populated_cell_count=1,
+            )
+            _expect(satisfy_verification.get("ok") is True, "Satisfy matrix consistency verification failed")
+            return {
+                "matrixId": satisfy_matrix_id,
+                "rowCount": satisfy_matrix["rowCount"],
+                "columnCount": satisfy_matrix["columnCount"],
+                "populatedCellCount": satisfy_matrix["populatedCellCount"],
+                "dependencyNames": _dependency_names(satisfy_matrix),
+                "verification": satisfy_verification,
+            }
+
+        async def validate_allocation_matrix() -> dict[str, Any]:
+            allocation_matrix_result = await client.create_matrix(
+                kind="SysML Allocation Matrix",
+                parent_id=validation_package_id,
+                name="Validation Allocation Matrix",
+                scope_id=validation_package_id,
+            )
+            allocation_matrix = allocation_matrix_result["matrix"]
+            allocation_matrix_id = allocation_matrix["id"]
+            report["artifacts"]["allocationMatrixId"] = allocation_matrix_id
+            _expect(allocation_matrix["kind"] == "allocation", "Allocation matrix returned the wrong kind")
+            _expect(
+                allocation_matrix["matrixType"] == "SysML Allocation Matrix",
+                "Wrong native allocation matrix type",
+            )
+            _expect(allocation_matrix["rowCount"] >= 2, "Allocation matrix did not include expected block rows")
+            _expect(allocation_matrix["columnCount"] >= 2, "Allocation matrix did not include expected block columns")
+            _expect(
+                allocation_matrix["populatedCellCount"] >= 1,
+                "Allocation matrix did not populate expected cells",
+            )
+            allocation_row_ids = _element_ids(allocation_matrix.get("rows", []))
+            allocation_column_ids = _element_ids(allocation_matrix.get("columns", []))
+            _expect(
+                block_a["id"] in allocation_row_ids and block_b["id"] in allocation_row_ids,
+                "Allocation matrix rows missed blocks",
+            )
+            _expect(
+                block_a["id"] in allocation_column_ids and block_b["id"] in allocation_column_ids,
+                "Allocation matrix columns missed blocks",
+            )
+            allocation_verification = await mcp_server.cameo_verify_matrix_consistency(
+                allocation_matrix_id,
+                expected_row_ids=[block_a["id"], block_b["id"]],
+                expected_column_ids=[block_a["id"], block_b["id"]],
+                min_populated_cell_count=1,
+            )
+            _expect(
+                allocation_verification.get("ok") is True,
+                "Allocation matrix consistency verification failed",
+            )
+            return {
+                "matrixId": allocation_matrix_id,
+                "rowCount": allocation_matrix["rowCount"],
+                "columnCount": allocation_matrix["columnCount"],
+                "populatedCellCount": allocation_matrix["populatedCellCount"],
+                "dependencyNames": _dependency_names(allocation_matrix),
+                "verification": allocation_verification,
+            }
+
+        await _run_validation_check(report, "refine-matrix-create-readback", validate_refine_matrix)
+        await _run_validation_check(report, "derive-matrix-create-readback", validate_derive_matrix)
+        await _run_validation_check(report, "satisfy-matrix-create-readback", validate_satisfy_matrix)
+        await _run_validation_check(report, "allocation-matrix-create-readback", validate_allocation_matrix)
+
+        async def validate_matrix_list_and_get() -> dict[str, Any]:
+            kinds_to_artifacts = {
+                "refine": report["artifacts"].get("refineMatrixId"),
+                "derive": report["artifacts"].get("deriveMatrixId"),
+                "satisfy": report["artifacts"].get("satisfyMatrixId"),
+                "allocation": report["artifacts"].get("allocationMatrixId"),
+            }
+            details: dict[str, Any] = {}
+            for kind, matrix_id in kinds_to_artifacts.items():
+                _expect(matrix_id is not None, f"No matrix id recorded for kind: {kind}")
+                listed = await client.list_matrices(kind=kind, owner_id=validation_package_id)
+                listed_ids = _element_ids(listed.get("matrices", []))
+                _expect(matrix_id in listed_ids, f"List {kind} matrices missed the created matrix")
+                fetched = await client.get_matrix(str(matrix_id))
+                _expect(fetched["id"] == matrix_id, f"Get {kind} matrix returned the wrong artifact")
+                details[kind] = {
+                    "matrixId": matrix_id,
+                    "listedCount": listed.get("count"),
+                    "fetchedPopulatedCellCount": fetched.get("populatedCellCount"),
+                }
+            return details
+
+        await _run_validation_check(report, "matrix-list-and-get", validate_matrix_list_and_get)
+
+        report["success"] = all(
+            item.get("ok") is True
+            for item in report.get("checks", [])
         )
-
-        listed_refine = await client.list_matrices(kind="refine", owner_id=validation_package_id)
-        listed_derive = await client.list_matrices(kind="derive", owner_id=validation_package_id)
-        listed_refine_ids = _element_ids(listed_refine.get("matrices", []))
-        listed_derive_ids = _element_ids(listed_derive.get("matrices", []))
-        _expect(refine_matrix_id in listed_refine_ids, "List refine matrices missed the created refine matrix")
-        _expect(derive_matrix_id in listed_derive_ids, "List derive matrices missed the created derive matrix")
-
-        fetched_refine = await client.get_matrix(refine_matrix_id)
-        fetched_derive = await client.get_matrix(derive_matrix_id)
-        _expect(fetched_refine["id"] == refine_matrix_id, "Get refine matrix returned the wrong artifact")
-        _expect(fetched_derive["id"] == derive_matrix_id, "Get derive matrix returned the wrong artifact")
-        _append_check(
-            report,
-            "matrix-list-and-get",
-            True,
-            {
-                "listedRefineCount": listed_refine.get("count"),
-                "listedDeriveCount": listed_derive.get("count"),
-                "fetchedRefinePopulatedCellCount": fetched_refine.get("populatedCellCount"),
-                "fetchedDerivePopulatedCellCount": fetched_derive.get("populatedCellCount"),
-            },
-        )
-
-        report["success"] = True
 
         if not keep_artifacts and validation_package_id is not None:
             report["cleanup"]["attempted"] = True
@@ -441,7 +506,7 @@ async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run a live validation pass for the native refine/derive matrix handler.",
+        description="Run a live validation pass for the supported native matrix handlers.",
     )
     parser.add_argument(
         "--keep-artifacts",

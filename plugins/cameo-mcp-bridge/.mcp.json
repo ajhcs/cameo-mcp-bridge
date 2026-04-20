@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "cameo-bridge-local": {
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "./scripts/run-cameo-mcp-server.ps1"
+      ],
+      "env": {
+        "CAMEO_BRIDGE_PORT": "18740"
+      }
+    }
+  }
+}

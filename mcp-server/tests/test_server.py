@@ -11,6 +11,7 @@ from cameo_mcp.server import (
     cameo_assemble_ppt_pdf,
     cameo_build_cross_diagram_remediation_plan,
     cameo_compare_expected_artifact_list,
+    cameo_create_element,
     cameo_detect_cross_diagram_inconsistencies,
     cameo_get_capabilities,
     cameo_get_diagram_image,
@@ -33,7 +34,7 @@ from cameo_mcp.server import (
     mcp,
     cameo_set_state_behaviors,
     cameo_set_transition_trigger,
-    cameo_validate_assignment_package,
+    cameo_validate_methodology_package,
     cameo_verify_activity_flow_semantics,
     cameo_verify_cross_diagram_traceability,
     cameo_verify_diagram_visual,
@@ -102,7 +103,7 @@ class ToolSchemaAliasTests(unittest.TestCase):
 
 class ServerToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_cameo_get_capabilities_returns_native_dict(self) -> None:
-        payload = {"pluginVersion": "2.3.1", "compatibility": {"clientCompatible": True}}
+        payload = {"pluginVersion": "2.3.2", "compatibility": {"clientCompatible": True}}
 
         with patch(
             "cameo_mcp.server.client.get_capabilities",
@@ -124,6 +125,52 @@ class ServerToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result, payload)
         probe_bridge.assert_awaited_once_with()
+
+    async def test_cameo_create_element_forwards_typed_creation_fields(self) -> None:
+        payload = {"created": True}
+
+        with patch(
+            "cameo_mcp.server.client.create_element",
+            new=AsyncMock(return_value=payload),
+        ) as create_element:
+            result = await cameo_create_element(
+                type="Port",
+                name="status",
+                parent_id="block-1",
+                stereotype="FullPort",
+                type_id="if-1",
+                lower=0,
+                upper="*",
+                is_ordered=False,
+                is_unique=True,
+                aggregation="none",
+                is_behavior=True,
+                is_conjugated=False,
+                is_service=True,
+                direction="out",
+            )
+
+        self.assertIs(result, payload)
+        create_element.assert_awaited_once_with(
+            type="Port",
+            name="status",
+            parent_id="block-1",
+            stereotype="FullPort",
+            documentation=None,
+            behavior_id=None,
+            represents_id=None,
+            type_id="if-1",
+            lower=0,
+            upper="*",
+            is_ordered=False,
+            is_unique=True,
+            aggregation="none",
+            is_behavior=True,
+            is_conjugated=False,
+            is_service=True,
+            direction="out",
+            metaclasses=None,
+        )
 
     async def test_cameo_list_methodology_packs_returns_native_dict(self) -> None:
         payload = {"count": 1, "packs": [{"id": "oosem"}]}
@@ -458,21 +505,21 @@ class ServerToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, payload)
         apply_patch_plan.assert_awaited_once_with({"operations": []})
 
-    async def test_cameo_validate_assignment_package_wraps_module(self) -> None:
+    async def test_cameo_validate_methodology_package_wraps_module(self) -> None:
         payload = {"ready": True}
 
         with patch(
-            "cameo_mcp.server.validate_assignment_package_live",
+            "cameo_mcp.server.validate_methodology_package_live",
             new=AsyncMock(return_value=payload),
-        ) as validate_assignment_package_live:
-            result = await cameo_validate_assignment_package(
+        ) as validate_methodology_package_live:
+            result = await cameo_validate_methodology_package(
                 "oosem",
                 recipe_id="logical_ibd",
                 root_package_id="pkg-1",
             )
 
         self.assertIs(result, payload)
-        validate_assignment_package_live.assert_awaited_once_with(
+        validate_methodology_package_live.assert_awaited_once_with(
             "oosem",
             recipe_id="logical_ibd",
             root_package_id="pkg-1",

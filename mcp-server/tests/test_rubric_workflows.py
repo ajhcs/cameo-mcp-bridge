@@ -11,7 +11,7 @@ from cameo_mcp.rubric_workflows import (
     assemble_ppt_pdf_live,
     compare_against_expected_artifact_list,
     export_required_diagrams_live,
-    validate_assignment_package,
+    validate_methodology_package,
 )
 
 
@@ -50,8 +50,8 @@ class RubricWorkflowTests(unittest.TestCase):
         self.assertEqual(["logical_ibd"], result["missingArtifactKeys"])
         self.assertGreater(len(result["patchPlan"]), 0)
 
-    def test_validate_assignment_package_uses_custom_expected_artifacts(self) -> None:
-        result = validate_assignment_package(
+    def test_validate_methodology_package_uses_custom_expected_artifacts(self) -> None:
+        result = validate_methodology_package(
             "oosem",
             current_artifacts=[
                 {"key": "workspace", "kind": "Package", "name": "Workspace", "element_id": "pkg-1"},

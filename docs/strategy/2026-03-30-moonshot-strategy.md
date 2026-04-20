@@ -102,7 +102,7 @@ If Phase 1 succeeds, users stop thinking “interesting bridge” and start thin
 ### Target Users
 
 - systems engineers who already live in Cameo
-- instructors and students doing OOSEM/SysML assignments
+- MBSE practitioners executing guided OOSEM/SysML workflows
 - consultants building or refactoring SysML/UML artifacts
 - internal toolsmiths trying to automate legacy Cameo-heavy workflows
 
@@ -193,7 +193,7 @@ If Phase 2 succeeds, the product stops being just a Cameo bridge and becomes a r
 
 ### Target Users
 
-- OOSEM practitioners building assignment or program artifacts
+- OOSEM practitioners building workflow or program artifacts
 - MBSE teams standardizing on repeatable artifact recipes
 - early UAF adopters who need help producing consistent views
 - engineering leads who care about traceability and review readiness
