@@ -6,7 +6,7 @@ Patch release that consolidates internal naming on neutral methodology terminolo
 
 ### Changed
 
-- Renamed `cameo_mcp.rubric_workflows` to `cameo_mcp.methodology_workflows`; the public MCP tool surface is unchanged
+- Consolidated the internal workflow module on the `cameo_mcp.methodology_workflows` name; the public MCP tool surface is unchanged
 - Updated README section heading and tool descriptions to use methodology-workflow wording
 - Rewrote tracked release notes, plan docs, and changelog entries to use methodology/package terminology throughout
 - Bumped the in-repo Python/plugin/methodology compatibility line to `2.3.3`
