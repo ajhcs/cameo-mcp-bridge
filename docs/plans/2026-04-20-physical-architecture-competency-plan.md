@@ -123,7 +123,7 @@ This plan supersedes the narrower physical-architecture-only scope. It treats ca
   - Live run of `live_validate_matrices.py` against the ATM model
 
 ### Task 2.4: Add Package-Structure Validation
-- **Location**: `mcp-server/cameo_mcp/rubric_workflows.py`, `verification.py`
+- **Location**: `mcp-server/cameo_mcp/methodology_workflows.py`, `verification.py`
 - **Description**: Validate physical-architecture definition and traceability container structure so missing or misplaced packages are reported explicitly.
 - **Dependencies**: Task 2.1
 - **Acceptance Criteria**:
@@ -201,7 +201,7 @@ This plan supersedes the narrower physical-architecture-only scope. It treats ca
   - Live runs against the reference sample project
 
 ### Task 4.3: Add Compact Review and Export Gates
-- **Location**: `mcp-server/cameo_mcp/rubric_workflows.py`, `proofing.py`, `README.md`
+- **Location**: `mcp-server/cameo_mcp/methodology_workflows.py`, `proofing.py`, `README.md`
 - **Description**: Gate package validation and evidence export on semantic readiness, and keep the review payload compact enough for Codex app usage.
 - **Dependencies**: Tasks 4.1-4.2
 - **Acceptance Criteria**:
@@ -227,7 +227,7 @@ This plan supersedes the narrower physical-architecture-only scope. It treats ca
   - Live run in Cameo with the user-provided project
 
 ### Task 5.2: Build a Repeatable Evidence Bundle
-- **Location**: `mcp-server/cameo_mcp/rubric_workflows.py`, `docs/releases`, `README.md`
+- **Location**: `mcp-server/cameo_mcp/methodology_workflows.py`, `docs/releases`, `README.md`
 - **Description**: Package exported diagrams, matrices, and validation receipts into a repeatable proof point for release readiness.
 - **Dependencies**: Task 5.1
 - **Acceptance Criteria**:

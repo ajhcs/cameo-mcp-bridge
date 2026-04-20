@@ -179,7 +179,7 @@ The roadmap is grounded in the MBSE course artifacts under `H:\My Drive\ColeAJHC
 ## Potential Risks & Gotchas
 - Cameo concepts that look generic in UML are not always generic in the API; each new abstraction should be verified against a live model.
 - Macro removal may expose hidden assumptions in the current methodology recipes.
-- Semantic validators may encode course-specific modeling expectations that need configurability rather than one fixed rule set.
+- Semantic validators may encode domain-specific modeling expectations that need configurability rather than one fixed rule set.
 - The plugin rebuild/deploy/restart loop remains expensive, so Java-side changes should be batched carefully.
 
 ## Rollback Plan

@@ -225,7 +225,7 @@ Lock the release against the MBSE transcript corpus and the specific failure mod
 
 ### Files
 
-- `mcp-server/scripts/live_validate_mbse_assignment.py` (new)
+- `mcp-server/scripts/live_validate_mbse_methodology.py` (new)
 - `mcp-server/scripts/live_validate_flow_properties.py`
 - `mcp-server/tests/fixtures/mbse/` (new fixture directory)
 - `mcp-server/tests/test_verification.py`
@@ -235,7 +235,7 @@ Lock the release against the MBSE transcript corpus and the specific failure mod
 
 - `mcp-server/tests/test_verification.py`
 - `mcp-server/tests/test_server.py`
-- `mcp-server/tests/test_mbse_assignment_release.py` (new)
+- `mcp-server/tests/test_mbse_methodology_release.py` (new)
 
 ### Tasks
 

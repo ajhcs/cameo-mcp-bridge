@@ -103,7 +103,7 @@ class ToolSchemaAliasTests(unittest.TestCase):
 
 class ServerToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_cameo_get_capabilities_returns_native_dict(self) -> None:
-        payload = {"pluginVersion": "2.3.2", "compatibility": {"clientCompatible": True}}
+        payload = {"pluginVersion": "2.3.3", "compatibility": {"clientCompatible": True}}
 
         with patch(
             "cameo_mcp.server.client.get_capabilities",

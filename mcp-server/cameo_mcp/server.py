@@ -26,7 +26,7 @@ from cameo_mcp.methodology import (
 )
 from cameo_mcp.proofing import apply_patch_plan as apply_proofing_patch_plan
 from cameo_mcp.proofing import proof_model_text
-from cameo_mcp.rubric_workflows import (
+from cameo_mcp.methodology_workflows import (
     assemble_ppt_pdf_live,
     compare_against_expected_artifact_list,
     export_required_diagrams_live,
@@ -1357,7 +1357,7 @@ async def cameo_compare_expected_artifact_list(
     expected_artifacts: list[dict[str, Any]],
     current_artifacts: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
-    """Compare discovered/current artifacts against an expected rubric artifact list."""
+    """Compare discovered/current artifacts against an expected methodology artifact list."""
     result = compare_against_expected_artifact_list(
         expected_artifacts=expected_artifacts,
         current_artifacts=current_artifacts,
@@ -1373,7 +1373,7 @@ async def cameo_validate_methodology_package(
     current_artifacts: Optional[list[dict[str, Any]]] = None,
     expected_artifacts: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
-    """Validate a package or recipe scope against the methodology rubric."""
+    """Validate a package or recipe scope against the methodology definition."""
     result = await validate_methodology_package_live(
         pack_id,
         recipe_id=recipe_id,
@@ -1394,7 +1394,7 @@ async def cameo_export_required_diagrams(
     export_format: str = "png",
     output_dir: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Plan or execute export of rubric-required diagrams.
+    """Plan or execute export of methodology-required diagrams.
 
     Omit `output_dir` for a dry-run export queue. Provide it to write the
     diagram images to disk.
@@ -1424,7 +1424,7 @@ async def cameo_assemble_ppt_pdf(
     pdf_name: Optional[str] = None,
     export_format: str = "png",
 ) -> dict[str, Any]:
-    """Plan or assemble a PPT/PDF package from rubric-required diagrams."""
+    """Plan or assemble a PPT/PDF package from methodology-required diagrams."""
     result = await assemble_ppt_pdf_live(
         pack_id,
         recipe_id=recipe_id,

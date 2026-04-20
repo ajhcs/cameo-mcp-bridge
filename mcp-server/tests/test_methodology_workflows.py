@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from cameo_mcp.rubric_workflows import (
+from cameo_mcp.methodology_workflows import (
     assemble_ppt_pdf_live,
     compare_against_expected_artifact_list,
     export_required_diagrams_live,
@@ -22,7 +22,7 @@ def _make_base64_png(width: int = 20, height: int = 10) -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-class FakeRubricBridge:
+class FakeMethodologyBridge:
     async def get_diagram_image(self, diagram_id: str, **kwargs):
         return {
             "id": diagram_id,
@@ -34,7 +34,7 @@ class FakeRubricBridge:
         }
 
 
-class RubricWorkflowTests(unittest.TestCase):
+class MethodologyWorkflowTests(unittest.TestCase):
     def test_compare_against_expected_artifact_list_returns_patch_plan(self) -> None:
         result = compare_against_expected_artifact_list(
             expected_artifacts=[
@@ -67,9 +67,9 @@ class RubricWorkflowTests(unittest.TestCase):
         self.assertIn("recommendedActions", result)
 
 
-class RubricWorkflowLiveTests(unittest.IsolatedAsyncioTestCase):
+class MethodologyWorkflowLiveTests(unittest.IsolatedAsyncioTestCase):
     async def test_export_required_diagrams_live_writes_images(self) -> None:
-        bridge = FakeRubricBridge()
+        bridge = FakeMethodologyBridge()
         with tempfile.TemporaryDirectory() as tmp_dir:
             result = await export_required_diagrams_live(
                 "oosem",
@@ -90,12 +90,12 @@ class RubricWorkflowLiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(export_path.stat().st_size, 0)
 
     async def test_assemble_ppt_pdf_live_creates_files(self) -> None:
-        bridge = FakeRubricBridge()
+        bridge = FakeMethodologyBridge()
         with tempfile.TemporaryDirectory() as tmp_dir:
             def _fake_write_pptx(image_paths, output_path, *, title):
                 Path(output_path).write_bytes(b"pptx")
 
-            with patch("cameo_mcp.rubric_workflows._write_pptx", _fake_write_pptx):
+            with patch("cameo_mcp.methodology_workflows._write_pptx", _fake_write_pptx):
                 result = await assemble_ppt_pdf_live(
                     "oosem",
                     current_artifacts=[

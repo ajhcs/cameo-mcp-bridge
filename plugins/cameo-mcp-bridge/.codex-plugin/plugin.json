@@ -1,6 +1,6 @@
 {
   "name": "cameo-mcp-bridge",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Repo-local Codex plugin for live, token-safe Cameo MCP Bridge workflows",
   "author": {
     "name": "Cole Lyons",

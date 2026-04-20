@@ -5,9 +5,9 @@ Release: `2.3.2`
 
 ## Summary
 
-This patch release makes the native requirement-matrix surface trustworthy enough to use as a release gate and removes course-specific naming from the public repo surface. It also packages the local Codex plugin scaffold so the same workspace can run probe-first, compact, live-validation workflows directly in the Codex app.
+This patch release makes the native requirement-matrix surface trustworthy enough to use as a release gate and aligns product-facing naming with neutral methodology/package terminology. It also packages the local Codex plugin scaffold so the same workspace can run probe-first, compact, live-validation workflows directly in the Codex app.
 
-Version `2.3.2` keeps the existing bridge contract shape intact while fixing the `refine` matrix regression, tightening dependency ownership, and aligning the user-facing methodology language with a product surface instead of a coursework surface.
+Version `2.3.2` keeps the existing bridge contract shape intact while fixing the `refine` matrix regression, tightening dependency ownership, and unifying the user-facing methodology language across the bridge, MCP tools, and docs.
 
 ## Shipped
 
@@ -19,9 +19,9 @@ Version `2.3.2` keeps the existing bridge contract shape intact while fixing the
 
 ### 2. Neutral methodology naming
 
-- Replaced tracked `HW-12`, module, and assignment naming in code/docs with neutral methodology/package terminology
+- Consolidated tracked code and docs on neutral methodology/package terminology
 - Renamed the public MCP validation tool to `cameo_validate_methodology_package`
-- Reframed the physical-architecture execution plan as a competency/reference-corpus plan instead of a course-specific plan
+- Framed the physical-architecture execution plan as a competency/reference-corpus plan
 
 ### 3. Codex workspace productization
 

@@ -348,13 +348,13 @@ These tools do not mutate the model. They exist to bridge the gap between valida
 
 Proofing is intentionally scoped to high-confidence name/text fixes. The proof report includes findings, metrics, sections, and a preview patch plan even when `auto_apply` is off.
 
-### Rubric Workflows (4 tools)
+### Methodology Workflows (4 tools)
 
 | Tool | Description |
 |------|-------------|
-| `cameo_compare_expected_artifact_list` | Diff current artifacts against an expected rubric artifact list and return preview actions |
-| `cameo_validate_methodology_package` | Validate a pack/recipe/package scope against the methodology rubric |
-| `cameo_export_required_diagrams` | Plan or execute export of the rubric-required diagram set |
+| `cameo_compare_expected_artifact_list` | Diff current artifacts against an expected methodology artifact list and return preview actions |
+| `cameo_validate_methodology_package` | Validate a pack/recipe/package scope against the methodology definition |
+| `cameo_export_required_diagrams` | Plan or execute export of the methodology-required diagram set |
 | `cameo_assemble_ppt_pdf` | Plan or assemble PPT/PDF review packages from the exported diagram set |
 
 For PPTX assembly, install the Python dependencies from `mcp-server/pyproject.toml` so `python-pptx` is available in the MCP runtime environment.

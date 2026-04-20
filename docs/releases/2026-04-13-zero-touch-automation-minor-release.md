@@ -31,7 +31,7 @@ Because `2.2.0` was never cut as a separate public release, the `2.3.0` release 
 - Added patch-plan generation so suggested wording changes can be reviewed before mutation
 - Added optional safe auto-apply support for model-backed text where the bridge can write directly
 
-### 3. Rubric-driven workflows
+### 3. Methodology-driven workflows
 
 - Added artifact-list comparison against expected deliverables
 - Added methodology/package validation helpers

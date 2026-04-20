@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.3 - 2026-04-20
+
+Patch release that consolidates internal naming on neutral methodology terminology and cleans residual mentions from the tracked docs surface.
+
+### Changed
+
+- Renamed `cameo_mcp.rubric_workflows` to `cameo_mcp.methodology_workflows`; the public MCP tool surface is unchanged
+- Updated README section heading and tool descriptions to use methodology-workflow wording
+- Rewrote tracked release notes, plan docs, and changelog entries to use methodology/package terminology throughout
+- Bumped the in-repo Python/plugin/methodology compatibility line to `2.3.3`
+
 ## 2.3.2 - 2026-04-20
 
 Patch release focused on live-verifiable native matrix coverage, neutral methodology naming, and Codex workspace productization.
@@ -14,7 +25,6 @@ Patch release focused on live-verifiable native matrix coverage, neutral methodo
 - Repaired native `Refine Requirement Matrix` population by binding `Refine` relationships to the requirements-profile stereotype that Cameo's matrix criteria actually consume
 - Updated the live matrix regression harness to validate the live-proven activity-to-requirement refine shape instead of the earlier speculative row domains
 - Corrected `Dependency` ownership so generic dependency creation resolves to a package owner instead of trying to attach to arbitrary source elements
-- Removed course-specific `HW-12`, module, and assignment naming from the tracked code/docs surface in favor of neutral methodology/package terminology
 - Corrected stale README tool-count claims so the documented MCP surface matches the actual bridge capability manifest
 
 ### Changed
@@ -49,7 +59,7 @@ Minor release focused on reducing end-to-end human intervention for review, clea
 - Legacy `/status` and `/capabilities` HTTP aliases alongside the versioned `/api/v1/...` endpoints
 - Native diagram repair endpoints for hidden labels, label-position resets, conveyed-item labels, and diagram-type-aware compartment presets
 - Python-side proofing helpers and MCP tools for requirements, comments, state/transition names, and diagram text, including preview patch plans and optional safe auto-apply
-- Rubric workflow helpers and MCP tools for comparing expected artifacts, validating package scope, exporting required diagrams, and assembling PPT/PDF submission bundles
+- Methodology workflow helpers and MCP tools for comparing expected artifacts, validating package scope, exporting required diagrams, and assembling PPT/PDF submission bundles
 - Semantic auto-remediation planning that converts cross-diagram validation findings into previewable receipts and `patchPlan.steps`
 - `python-pptx` as an MCP-server dependency so PPTX assembly can be automated instead of remaining a manual post-step
 
@@ -58,13 +68,13 @@ Minor release focused on reducing end-to-end human intervention for review, clea
 - Enum-valued stereotype tagged values now resolve actual `EnumerationLiteral` instances by ID or name instead of falling through the generic JSON coercion path
 - `set_specification` now benefits from the same stereotype enum coercion path as `set_tagged_values`
 - Direct Python client consumers can now omit, resize, transcode, page, filter, and summarize large diagram payloads instead of reimplementing the MCP-side shaping logic
-- `ibd` / `bdd` artifact kinds now participate correctly in rubric export/assembly flows instead of being dropped as non-diagrams
+- `ibd` / `bdd` artifact kinds now participate correctly in methodology export/assembly flows instead of being dropped as non-diagrams
 - The bridge capability manifest now advertises the new diagram repair endpoints alongside the earlier presentation presets
 
 ### Changed
 
 - Bumped the in-repo Python/plugin/methodology compatibility line to `2.3.0`
-- Expanded the README tool reference to document repair, proofing, rubric workflow, and remediation surfaces
+- Expanded the README tool reference to document repair, proofing, methodology workflow, and remediation surfaces
 
 ## 2.1.0 - 2026-04-13
 

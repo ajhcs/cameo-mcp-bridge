@@ -1,7 +1,7 @@
-"""Dry-run rubric workflow helpers for methodology/package validation.
+"""Dry-run methodology workflow helpers for methodology/package validation.
 
 This module stays intentionally light on bridge mutation. It reuses the
-methodology registry/service layer to build rubric expectations and then
+methodology registry/service layer to build methodology expectations and then
 projects those expectations into reviewable plan objects:
 
 - validate methodology/package
@@ -210,7 +210,7 @@ def _suggested_actions(expected: Mapping[str, Any], actual: Mapping[str, Any] | 
             {
                 "action": "update_stereotypes",
                 "targetKey": expected["key"],
-                "preview": f"Update stereotypes on '{actual.get('name') or actual['key']}' to match the rubric.",
+                "preview": f"Update stereotypes on '{actual.get('name') or actual['key']}' to match the methodology expectation.",
             }
         )
     if any("property" in reason for reason in reasons):
@@ -218,7 +218,7 @@ def _suggested_actions(expected: Mapping[str, Any], actual: Mapping[str, Any] | 
             {
                 "action": "update_properties",
                 "targetKey": expected["key"],
-                "preview": f"Update properties on '{actual.get('name') or actual['key']}' to match the rubric.",
+                "preview": f"Update properties on '{actual.get('name') or actual['key']}' to match the methodology expectation.",
             }
         )
     return actions
@@ -228,7 +228,7 @@ def compare_against_expected_artifact_list(
     expected_artifacts: Sequence[Mapping[str, Any] | Any],
     current_artifacts: Sequence[Mapping[str, Any] | Any] | None = None,
 ) -> dict[str, Any]:
-    """Compare current artifacts against an expected rubric list.
+    """Compare current artifacts against an expected methodology artifact list.
 
     The function is intentionally dry-run oriented. It returns a stable diff and
     previewable patch plan instead of mutating the model.
@@ -258,7 +258,7 @@ def compare_against_expected_artifact_list(
             entries.append(entry)
             patch_plan.extend(
                 {
-                    "stepId": f"rubric:{len(patch_plan) + index}",
+                    "stepId": f"methodology:{len(patch_plan) + index}",
                     **action,
                     "status": "preview",
                     "reason": "missing artifact",
@@ -303,7 +303,7 @@ def compare_against_expected_artifact_list(
         if status != "match":
             patch_plan.extend(
                 {
-                    "stepId": f"rubric:{len(patch_plan) + index}",
+                    "stepId": f"methodology:{len(patch_plan) + index}",
                     **action,
                     "status": "preview",
                     "reason": ", ".join(reasons) or "comparison mismatch",
@@ -318,7 +318,7 @@ def compare_against_expected_artifact_list(
         entry = {
             "key": key,
             "status": "unexpected",
-            "reasons": ["artifact not listed in rubric"],
+            "reasons": ["artifact not listed in methodology"],
             "expected": None,
             "actual": actual,
             "fixable": False,
@@ -326,7 +326,7 @@ def compare_against_expected_artifact_list(
                 {
                     "action": "review_or_remove_artifact",
                     "targetKey": key,
-                    "preview": f"Review whether '{actual.get('name') or key}' belongs in the rubric or should be removed.",
+                    "preview": f"Review whether '{actual.get('name') or key}' belongs in the methodology or should be removed.",
                 }
             ],
         }
@@ -335,7 +335,7 @@ def compare_against_expected_artifact_list(
     entries.extend(unexpected)
     patch_plan.extend(
         {
-            "stepId": f"rubric:{len(patch_plan) + index}",
+            "stepId": f"methodology:{len(patch_plan) + index}",
             **action,
             "status": "preview",
             "reason": "unexpected artifact",
@@ -494,8 +494,8 @@ def assemble_ppt_pdf(
             "slideNumber": 1,
             "kind": "title",
             "title": deck_title,
-            "subtitle": f"{pack.domain} rubric workflow",
-            "notes": "Cover slide generated from the rubric workflow plan.",
+            "subtitle": f"{pack.domain} methodology workflow",
+            "notes": "Cover slide generated from the methodology workflow plan.",
         }
     ]
     for index, item in enumerate(export_items, start=2):
@@ -515,7 +515,7 @@ def assemble_ppt_pdf(
         {
             "slideNumber": len(slide_items) + 1,
             "kind": "appendix",
-            "title": "Rubric Comparison",
+            "title": "Methodology Comparison",
             "notes": "Summary of missing, unexpected, and blocked artifacts.",
         }
     )
@@ -638,7 +638,7 @@ def _write_pptx(
     cover.shapes.title.text = title
     subtitle = cover.placeholders[1] if len(cover.placeholders) > 1 else None
     if subtitle is not None:
-        subtitle.text = "Generated by Cameo MCP rubric workflow"
+        subtitle.text = "Generated by Cameo MCP methodology workflow"
 
     blank_layout = presentation.slide_layouts[6]
     slide_width = presentation.slide_width
