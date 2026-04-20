@@ -34,7 +34,7 @@ Because `2.2.0` was never cut as a separate public release, the `2.3.0` release 
 ### 3. Rubric-driven workflows
 
 - Added artifact-list comparison against expected deliverables
-- Added assignment/package validation helpers
+- Added methodology/package validation helpers
 - Added required-diagram export helpers
 - Added automated PPT/PDF assembly support so submission bundles can be produced directly from the bridge workflow
 
@@ -80,4 +80,4 @@ Plugin/server version lockstep is still required.
 - Add a one-shot `cameo_repair_diagram` orchestration tool that runs the repair passes with diagram-type defaults
 - Add an apply-side cross-diagram remediation endpoint so preview plans can become controlled edits
 - Expand proofing coverage to more presentation-only text where the model element is not the display source of truth
-- Add assignment-specific export templates and richer submission bundle assembly
+- Add workflow-specific export templates and richer evidence bundle assembly

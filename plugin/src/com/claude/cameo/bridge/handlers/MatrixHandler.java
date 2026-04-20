@@ -329,7 +329,7 @@ public class MatrixHandler implements HttpHandler {
         MatrixKind kind = MatrixKind.fromDiagramType(diagramType(dpe));
         if (kind == null) {
             throw new IllegalArgumentException(
-                    "Matrix is not a supported refine/derive matrix: " + matrixId);
+                    "Matrix is not a supported matrix kind: " + matrixId);
         }
         dpe.ensureLoaded();
         return new MatrixContext(kind, dpe.getDiagram(), dpe);
@@ -492,7 +492,9 @@ public class MatrixHandler implements HttpHandler {
 
     private enum MatrixKind {
         REFINE("refine", "Refine Requirement Matrix", List.of("Block"), List.of("Requirement")),
-        DERIVE("derive", "Derive Requirement Matrix", List.of("Requirement"), List.of("Requirement"));
+        DERIVE("derive", "Derive Requirement Matrix", List.of("Requirement"), List.of("Requirement")),
+        SATISFY("satisfy", "Satisfy Requirement Matrix", List.of("Block"), List.of("Requirement")),
+        ALLOCATION("allocation", "SysML Allocation Matrix", List.of("Block"), List.of("Block"));
 
         private final String apiName;
         private final String diagramType;
@@ -515,7 +517,7 @@ public class MatrixHandler implements HttpHandler {
             if (kind == null) {
                 throw new IllegalArgumentException(
                         "Unsupported matrix kind: " + rawValue
-                                + ". Supported: refine, derive");
+                                + ". Supported: refine, derive, satisfy, allocation");
             }
             return kind;
         }
@@ -532,6 +534,14 @@ public class MatrixHandler implements HttpHandler {
                 case "derive":
                 case "deriverequirementmatrix":
                     return DERIVE;
+                case "satisfy":
+                case "satisfyrequirementmatrix":
+                    return SATISFY;
+                case "allocation":
+                case "allocationmatrix":
+                case "systemallocationmatrix":
+                case "sysmlallocationmatrix":
+                    return ALLOCATION;
                 default:
                     return null;
             }

@@ -289,6 +289,64 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             request.await_args.kwargs["json_body"],
         )
 
+    async def test_create_element_includes_typed_property_and_port_fields(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_element(
+                type="Port",
+                name="status",
+                parent_id="block-1",
+                stereotype="FullPort",
+                type_id="if-1",
+                lower=0,
+                upper="*",
+                is_ordered=False,
+                is_unique=True,
+                is_behavior=True,
+                is_conjugated=False,
+                is_service=True,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual(
+            {
+                "type": "Port",
+                "name": "status",
+                "parentId": "block-1",
+                "stereotype": "FullPort",
+                "typeId": "if-1",
+                "lower": 0,
+                "upper": "*",
+                "isOrdered": False,
+                "isUnique": True,
+                "isBehavior": True,
+                "isConjugated": False,
+                "isService": True,
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_element_includes_flow_property_direction(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_element(
+                type="FlowProperty",
+                name="payload",
+                parent_id="if-1",
+                type_id="signal-1",
+                direction="out",
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual(
+            {
+                "type": "FlowProperty",
+                "name": "payload",
+                "parentId": "if-1",
+                "typeId": "signal-1",
+                "direction": "out",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
     async def test_create_relationship_includes_connector_fields(self) -> None:
         with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
             await client.create_relationship(
@@ -404,7 +462,7 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             await client.create_matrix(
                 kind="refine",
                 parent_id="pkg-1",
-                row_types=["UseCase", "Property"],
+                row_types=["Activity"],
                 column_types=["Requirement"],
             )
 
@@ -413,7 +471,7 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             {
                 "kind": "refine",
                 "parentId": "pkg-1",
-                "rowTypes": ["UseCase", "Property"],
+                "rowTypes": ["Activity"],
                 "columnTypes": ["Requirement"],
             },
             request.await_args.kwargs["json_body"],
@@ -432,6 +490,34 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
                 "parentId": "pkg-1",
             },
             request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_matrix_normalizes_satisfy_aliases(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_matrix(
+                kind="Satisfy Requirement Matrix",
+                parent_id="pkg-1",
+            )
+
+        self.assertEqual(
+            {
+                "kind": "satisfy",
+                "parentId": "pkg-1",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_list_matrices_normalizes_allocation_aliases(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"count": 0})) as request:
+            await client.list_matrices(
+                kind="System Allocation Matrix",
+            )
+
+        self.assertEqual(
+            {
+                "kind": "allocation",
+            },
+            request.await_args.kwargs["params"],
         )
 
     async def test_create_diagram_normalizes_internal_block_alias(self) -> None:

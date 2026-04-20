@@ -1,10 +1,10 @@
-"""Dry-run rubric workflow helpers for assignment/package validation.
+"""Dry-run rubric workflow helpers for methodology/package validation.
 
 This module stays intentionally light on bridge mutation. It reuses the
 methodology registry/service layer to build rubric expectations and then
 projects those expectations into reviewable plan objects:
 
-- validate assignment/package
+- validate methodology/package
 - export required diagrams
 - assemble PPT/PDF
 - compare against an expected artifact list
@@ -374,14 +374,14 @@ def _workflow_context(
     return pack, workflow_guidance, expected, comparison["entries"]
 
 
-def validate_assignment_package(
+def validate_methodology_package(
     pack_id: str,
     *,
     recipe_id: str | None = None,
     current_artifacts: Sequence[Mapping[str, Any] | Any] | None = None,
     expected_artifacts: Sequence[Mapping[str, Any] | Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate a rubric assignment/package in dry-run mode."""
+    """Validate a methodology package or recipe scope in dry-run mode."""
     pack = registry.get_pack(pack_id)
     expected = (
         [_coerce_artifact(item, role="expected") for item in expected_artifacts]
@@ -664,7 +664,7 @@ def _write_pptx(
     presentation.save(output_path)
 
 
-async def validate_assignment_package_live(
+async def validate_methodology_package_live(
     pack_id: str,
     *,
     recipe_id: str | None = None,
@@ -683,7 +683,7 @@ async def validate_assignment_package_live(
             bridge=bridge,
         )
     )
-    result = validate_assignment_package(
+    result = validate_methodology_package(
         pack_id,
         recipe_id=recipe_id,
         current_artifacts=discovered,
@@ -836,6 +836,6 @@ __all__ = [
     "discover_current_artifacts",
     "export_required_diagrams",
     "export_required_diagrams_live",
-    "validate_assignment_package",
-    "validate_assignment_package_live",
+    "validate_methodology_package",
+    "validate_methodology_package_live",
 ]

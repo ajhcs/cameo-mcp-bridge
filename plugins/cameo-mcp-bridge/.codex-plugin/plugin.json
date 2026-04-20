@@ -1,0 +1,42 @@
+{
+  "name": "cameo-mcp-bridge",
+  "version": "2.3.2",
+  "description": "Repo-local Codex plugin for live, token-safe Cameo MCP Bridge workflows",
+  "author": {
+    "name": "Cole Lyons",
+    "url": "https://github.com/ajhcs"
+  },
+  "homepage": "https://github.com/ajhcs/cameo-mcp-bridge",
+  "repository": "https://github.com/ajhcs/cameo-mcp-bridge",
+  "license": "MIT",
+  "keywords": [
+    "cameo",
+    "mcp",
+    "sysml",
+    "uml",
+    "mbse",
+    "verification"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Cameo MCP Bridge",
+    "shortDescription": "Local Cameo bridge with probe-first, compact, verifiable workflows",
+    "longDescription": "Expose the local Cameo MCP Bridge in Codex with live health probing, open-project gating, compact read patterns, and verification-first modeling workflows.",
+    "developerName": "Cole Lyons",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/ajhcs/cameo-mcp-bridge",
+    "defaultPrompt": [
+      "Probe the local Cameo bridge, confirm compatibility, and tell me if a project is open.",
+      "Review this model with compact queries and verification tools before proposing changes.",
+      "Run live validation against the open Cameo model and summarize done, failed, and blocked work."
+    ],
+    "brandColor": "#0F766E",
+    "screenshots": []
+  }
+}

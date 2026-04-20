@@ -2,7 +2,7 @@
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
 
-This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 57 tools covering capability negotiation, methodology-aware OOSEM workflows, semantic validation, state-machine semantics, elements, relationships, native requirement matrices, diagrams, reusable verification, specifications, and Groovy macro execution.
+This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 46 tools covering capability negotiation, methodology-aware OOSEM workflows, semantic validation, state-machine semantics, elements, relationships, native requirement matrices, diagrams, reusable verification, specifications, and Groovy macro execution.
 
 ```
 Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (Cameo JVM)
@@ -263,19 +263,21 @@ If you create a custom profile through MCP, the typical sequence is:
 | Tool | Description |
 |------|-------------|
 | `cameo_list_matrix_kinds` | List validated native matrix kinds, aliases, and example type domains |
-| `cameo_list_matrices` | List supported native requirement matrices in the project |
-| `cameo_get_matrix` | Read one native refine/derive matrix with rows, columns, and populated cells |
-| `cameo_create_matrix` | Create a native refine or derive requirement matrix artifact |
+| `cameo_list_matrices` | List supported native matrix artifacts in the project |
+| `cameo_get_matrix` | Read one supported native matrix with rows, columns, and populated cells |
+| `cameo_create_matrix` | Create a supported native matrix artifact |
 
-**Supported matrix kinds:** `refine`, `derive`
+**Supported matrix kinds:** `refine`, `derive`, `satisfy`, `allocation`
 
 These tools target Cameo's native matrix artifacts:
 - `refine` -> `Refine Requirement Matrix`
 - `derive` -> `Derive Requirement Matrix`
+- `satisfy` -> `Satisfy Requirement Matrix`
+- `allocation` -> `SysML Allocation Matrix`
 
-This matrix family is separate from the diagram shape/path API. It manages native requirement-matrix artifacts and returns row/column/cell data directly.
+This matrix family is separate from the diagram shape/path API. It manages native matrix artifacts and returns row/column/cell data directly.
 
-`cameo_create_matrix` also accepts optional `row_types` and `column_types` lists so native refine matrices can target mission artifacts such as `UseCase`, `Property`, or SysML stereotypes instead of being fixed to `Block`. Use `cameo_list_matrix_kinds` to see the validated kind aliases and example type domains.
+`cameo_create_matrix` also accepts optional `row_types` and `column_types` lists so native matrix artifacts can be constrained to specific domains when the underlying matrix kind supports it. Use `cameo_list_matrix_kinds` to see the validated kind aliases and live-proven example type domains.
 
 ### Diagrams (22 tools)
 
@@ -351,7 +353,7 @@ Proofing is intentionally scoped to high-confidence name/text fixes. The proof r
 | Tool | Description |
 |------|-------------|
 | `cameo_compare_expected_artifact_list` | Diff current artifacts against an expected rubric artifact list and return preview actions |
-| `cameo_validate_assignment_package` | Validate a pack/recipe/package scope against the methodology rubric |
+| `cameo_validate_methodology_package` | Validate a pack/recipe/package scope against the methodology rubric |
 | `cameo_export_required_diagrams` | Plan or execute export of the rubric-required diagram set |
 | `cameo_assemble_ppt_pdf` | Plan or assemble PPT/PDF review packages from the exported diagram set |
 
@@ -466,7 +468,7 @@ The bridge builds models correctly -- elements, relationships, directionality, s
 **Current direction:** Keep expanding structured editing for nested presentation elements so fewer workflows require macros.
 
 ### Not Yet Implemented
-- **Generic matrix/table artifact handler** -- native matrix support currently covers refine/derive requirement matrices only
+- **Generic matrix/table artifact handler** -- native matrix support currently covers refine, derive, satisfy, and allocation matrices only
 - **Remove stereotype** -- can apply but not remove
 - **Delete/rename diagrams** -- diagrams can be created and populated but not deleted or renamed through the bridge
 - **Element reparenting** -- cannot move elements between packages
@@ -506,7 +508,7 @@ cameo-mcp-bridge/
     cameo_mcp/
       __init__.py
       client.py                        # HTTP client for the Java plugin
-      server.py                        # MCP tool definitions (57 tools)
+server.py                        # MCP tool definitions (46 tools)
       verification.py                  # reusable diagram/matrix verification helpers
       methodology/                     # Phase 2 pack registry + recipe runtime
         registry.py
@@ -522,7 +524,7 @@ cameo-mcp-bridge/
         ElementQueryHandler.java       # Element search, get, relationships
         ElementMutationHandler.java    # Create, modify, delete elements
         RelationshipHandler.java       # Create relationships
-        MatrixHandler.java             # Native refine/derive requirement matrices
+        MatrixHandler.java             # Native matrix artifacts
         DiagramHandler.java            # Full diagram lifecycle
         ContainmentTreeHandler.java    # Containment tree browsing
         SpecificationHandler.java      # Specification read/write

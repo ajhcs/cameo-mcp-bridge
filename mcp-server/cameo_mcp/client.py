@@ -13,7 +13,7 @@ from typing import Any, Optional
 import httpx
 from PIL import Image
 
-BRIDGE_PLUGIN_VERSION = "2.3.1"
+BRIDGE_PLUGIN_VERSION = "2.3.2"
 BRIDGE_API_VERSION = "v1"
 BRIDGE_HANDSHAKE_VERSION = "1"
 
@@ -44,7 +44,7 @@ VALIDATED_MATRIX_KINDS: list[dict[str, Any]] = [
         "kind": "refine",
         "nativeType": "Refine Requirement Matrix",
         "aliases": ["refine", "refine matrix", "refine requirement matrix"],
-        "validatedRowTypeExamples": ["Block", "UseCase", "Property"],
+        "validatedRowTypeExamples": ["Activity"],
         "validatedColumnTypeExamples": ["Requirement"],
     },
     {
@@ -53,6 +53,20 @@ VALIDATED_MATRIX_KINDS: list[dict[str, Any]] = [
         "aliases": ["derive", "derive matrix", "derive requirement matrix"],
         "validatedRowTypeExamples": ["Requirement"],
         "validatedColumnTypeExamples": ["Requirement"],
+    },
+    {
+        "kind": "satisfy",
+        "nativeType": "Satisfy Requirement Matrix",
+        "aliases": ["satisfy", "satisfy matrix", "satisfy requirement matrix"],
+        "validatedRowTypeExamples": ["Block", "Component", "Property"],
+        "validatedColumnTypeExamples": ["Requirement"],
+    },
+    {
+        "kind": "allocation",
+        "nativeType": "SysML Allocation Matrix",
+        "aliases": ["allocation", "allocation matrix", "system allocation matrix", "sysml allocation matrix"],
+        "validatedRowTypeExamples": ["Block", "Property", "UseCase"],
+        "validatedColumnTypeExamples": ["Block", "Property", "Component"],
     },
 ]
 
@@ -754,6 +768,16 @@ async def create_element(
     documentation: Optional[str] = None,
     behavior_id: Optional[str] = None,
     represents_id: Optional[str] = None,
+    type_id: Optional[str] = None,
+    lower: Optional[int] = None,
+    upper: Optional[int | str] = None,
+    is_ordered: Optional[bool] = None,
+    is_unique: Optional[bool] = None,
+    aggregation: Optional[str] = None,
+    is_behavior: Optional[bool] = None,
+    is_conjugated: Optional[bool] = None,
+    is_service: Optional[bool] = None,
+    direction: Optional[str] = None,
     metaclasses: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Create a new model element."""
@@ -770,6 +794,26 @@ async def create_element(
         body["behaviorId"] = behavior_id
     if represents_id is not None:
         body["representsId"] = represents_id
+    if type_id is not None:
+        body["typeId"] = type_id
+    if lower is not None:
+        body["lower"] = lower
+    if upper is not None:
+        body["upper"] = upper
+    if is_ordered is not None:
+        body["isOrdered"] = is_ordered
+    if is_unique is not None:
+        body["isUnique"] = is_unique
+    if aggregation is not None:
+        body["aggregation"] = aggregation
+    if is_behavior is not None:
+        body["isBehavior"] = is_behavior
+    if is_conjugated is not None:
+        body["isConjugated"] = is_conjugated
+    if is_service is not None:
+        body["isService"] = is_service
+    if direction is not None:
+        body["direction"] = direction
     if metaclasses is not None:
         body["metaclasses"] = metaclasses
     return await _request("POST", "/elements", json_body=body)
@@ -912,17 +956,17 @@ async def list_matrices(
     kind: Optional[str] = None,
     owner_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """List supported native requirement matrices in the current project."""
+    """List supported native matrix artifacts in the current project."""
     params: dict[str, Any] = {}
     if kind is not None:
-        params["kind"] = kind
+        params["kind"] = normalize_matrix_kind(kind)
     if owner_id is not None:
         params["ownerId"] = owner_id
     return await _request("GET", "/matrices", params=params)
 
 
 async def get_matrix(matrix_id: str) -> dict[str, Any]:
-    """Get one supported native requirement matrix with populated cell data."""
+    """Get one supported native matrix with populated cell data."""
     return await _request("GET", f"/matrices/{matrix_id}")
 
 
@@ -936,7 +980,7 @@ async def create_matrix(
     row_types: Optional[list[str]] = None,
     column_types: Optional[list[str]] = None,
 ) -> dict[str, Any]:
-    """Create a native refine/derive requirement matrix."""
+    """Create a supported native matrix artifact."""
     body: dict[str, Any] = {
         "kind": normalize_matrix_kind(kind),
         "parentId": parent_id,

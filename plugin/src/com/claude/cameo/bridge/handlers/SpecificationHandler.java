@@ -10,7 +10,10 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Constraint;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralInteger;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralString;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralUnlimitedNatural;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.MultiplicityElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.OpaqueExpression;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
@@ -19,8 +22,11 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.TypedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.ValueSpecification;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.VisibilityKind;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.VisibilityKindEnum;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.AggregationKindEnum;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdports.Port;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
+import com.nomagic.uml2.ext.magicdraw.activities.mdintermediateactivities.ActivityPartition;
 import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
 import com.nomagic.uml2.impl.ElementsFactory;
 import com.sun.net.httpserver.HttpExchange;
@@ -65,7 +71,14 @@ public class SpecificationHandler implements HttpHandler {
         "isDerivedUnion",
         "isOrdered",
         "isUnique",
+        "lower",
+        "upper",
         "isActive",
+        "aggregation",
+        "isBehavior",
+        "isConjugated",
+        "isService",
+        "represents",
         "type"
     };
 
@@ -294,6 +307,16 @@ public class SpecificationHandler implements HttpHandler {
             // Not a UseCase or feature not available -- skip
         }
 
+        if (element instanceof Property) {
+            Stereotype flowPropertyStereo = getFlowPropertyStereotype(element);
+            if (flowPropertyStereo != null) {
+                String direction = readFlowPropertyDirection((Property) element, flowPropertyStereo);
+                if (direction != null && !direction.isEmpty()) {
+                    properties.addProperty("direction", direction);
+                }
+            }
+        }
+
         return properties;
     }
 
@@ -392,6 +415,44 @@ public class SpecificationHandler implements HttpHandler {
             LOG.log(Level.FINE, "Could not read comments", e);
         }
         return null;
+    }
+
+    private Stereotype getFlowPropertyStereotype(Element element) {
+        Stereotype flowProperty = StereotypesHelper.getAppliedStereotypeByString(element, "FlowProperty");
+        if (flowProperty != null) {
+            return flowProperty;
+        }
+        return StereotypesHelper.getAppliedStereotypeByString(element, "flowProperty");
+    }
+
+    private String readFlowPropertyDirection(Property property, Stereotype flowPropertyStereo) {
+        try {
+            Object direction = StereotypesHelper.getStereotypePropertyFirst(
+                    property,
+                    flowPropertyStereo,
+                    "direction");
+            if (direction == null) {
+                return null;
+            }
+            if (direction instanceof Enum<?>) {
+                return ((Enum<?>) direction).name();
+            }
+            try {
+                Object name = direction.getClass().getMethod("getName").invoke(direction);
+                if (name != null) {
+                    String text = String.valueOf(name).trim();
+                    if (!text.isEmpty()) {
+                        return text;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Fall through to String.valueOf below.
+            }
+            return String.valueOf(direction);
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read flow property direction", e);
+            return null;
+        }
     }
 
     @SuppressWarnings("rawtypes")
@@ -523,8 +584,58 @@ public class SpecificationHandler implements HttpHandler {
                 case "type":
                     return setTypedElementType(element, value, project);
 
+                case "direction":
+                    return setFlowPropertyDirection(element, value, project);
+
+                case "lower":
+                    return setMultiplicityBound(element, value, project, true);
+
+                case "upper":
+                    return setMultiplicityBound(element, value, project, false);
+
+                case "isOrdered":
+                    if (element instanceof MultiplicityElement) {
+                        ((MultiplicityElement) element).setOrdered(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "isUnique":
+                    if (element instanceof MultiplicityElement) {
+                        ((MultiplicityElement) element).setUnique(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "aggregation":
+                    return setAggregation(element, value);
+
+                case "isBehavior":
+                    if (element instanceof Port) {
+                        ((Port) element).setBehavior(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "isConjugated":
+                    if (element instanceof Port) {
+                        ((Port) element).setConjugated(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "isService":
+                    if (element instanceof Port) {
+                        ((Port) element).setService(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "represents":
+                    return setRepresents(element, value, project);
+
                 default:
-                    return tryRefSetValue(element, propName, value);
+                    return tryRefSetValue(element, propName, value, project);
             }
         } catch (Exception e) {
             LOG.log(Level.WARNING,
@@ -534,26 +645,12 @@ public class SpecificationHandler implements HttpHandler {
     }
 
     private boolean tryRefSetValue(Element element, String propName,
-            JsonElement value) {
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
         for (String feat : STANDARD_FEATURES) {
             if (feat.equals(propName)) {
                 try {
-                    if (value.isJsonPrimitive()) {
-                        JsonPrimitive prim = value.getAsJsonPrimitive();
-                        if (prim.isBoolean()) {
-                            element.refSetValue(propName,
-                                    prim.getAsBoolean());
-                        } else if (prim.isNumber()) {
-                            element.refSetValue(propName,
-                                    prim.getAsNumber().intValue());
-                        } else {
-                            element.refSetValue(propName,
-                                    prim.getAsString());
-                        }
-                    } else {
-                        element.refSetValue(propName,
-                                value.toString());
-                    }
+                    element.refSetValue(propName, coerceJsonValue(value, project));
                     return true;
                 } catch (Exception e) {
                     LOG.log(Level.FINE,
@@ -597,6 +694,118 @@ public class SpecificationHandler implements HttpHandler {
         }
 
         ((TypedElement) element).setType((Type) resolved);
+        return true;
+    }
+
+    private boolean setMultiplicityBound(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project,
+            boolean lowerBound) {
+        if (!(element instanceof MultiplicityElement)) {
+            return false;
+        }
+        Integer bound = parseMultiplicityBound(value, !lowerBound);
+        if (bound == null) {
+            return false;
+        }
+
+        ElementsFactory ef = project.getElementsFactory();
+        MultiplicityElement multiplicityElement = (MultiplicityElement) element;
+        if (lowerBound) {
+            if (bound < 0) {
+                throw new IllegalArgumentException("lower must be zero or greater");
+            }
+            ValueSpecification existing = multiplicityElement.getLowerValue();
+            if (existing instanceof LiteralInteger) {
+                ((LiteralInteger) existing).setValue(bound);
+            } else {
+                LiteralInteger literal = ef.createLiteralIntegerInstance();
+                literal.setValue(bound);
+                multiplicityElement.setLowerValue(literal);
+            }
+            return true;
+        }
+
+        ValueSpecification existing = multiplicityElement.getUpperValue();
+        if (existing instanceof LiteralUnlimitedNatural) {
+            ((LiteralUnlimitedNatural) existing).setValue(bound);
+        } else {
+            LiteralUnlimitedNatural literal = ef.createLiteralUnlimitedNaturalInstance();
+            literal.setValue(bound);
+            multiplicityElement.setUpperValue(literal);
+        }
+        return true;
+    }
+
+    private Integer parseMultiplicityBound(JsonElement value, boolean allowUnlimited) {
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        if (value.isJsonPrimitive()) {
+            JsonPrimitive primitive = value.getAsJsonPrimitive();
+            if (primitive.isNumber()) {
+                return primitive.getAsInt();
+            }
+            if (primitive.isString()) {
+                String text = primitive.getAsString().trim();
+                if (allowUnlimited && "*".equals(text)) {
+                    return -1;
+                }
+                return Integer.parseInt(text);
+            }
+        }
+        throw new IllegalArgumentException("Multiplicity bounds must be integers" + (allowUnlimited ? " or '*'" : ""));
+    }
+
+    private boolean setAggregation(Element element, JsonElement value) {
+        if (!(element instanceof Property)) {
+            return false;
+        }
+        String text = value.getAsString().trim().toLowerCase();
+        AggregationKindEnum resolved = AggregationKindEnum.getByName(text);
+        if (resolved == null) {
+            resolved = AggregationKindEnum.get(text);
+        }
+        if (resolved == null) {
+            throw new IllegalArgumentException(
+                    "Unsupported aggregation value: " + text + ". Expected none, shared, or composite.");
+        }
+        ((Property) element).setAggregation(resolved);
+        return true;
+    }
+
+    private boolean setRepresents(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (!(element instanceof ActivityPartition)) {
+            return false;
+        }
+        Object coerced = coerceJsonValue(value, project);
+        if (!(coerced instanceof Element)) {
+            throw new IllegalArgumentException("represents must reference an element by id");
+        }
+        ((ActivityPartition) element).setRepresents((Element) coerced);
+        return true;
+    }
+
+    private boolean setFlowPropertyDirection(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (!(element instanceof Property)) {
+            return false;
+        }
+        Stereotype flowPropertyStereo = getFlowPropertyStereotype(element);
+        if (flowPropertyStereo == null) {
+            return false;
+        }
+        StereotypesHelper.setStereotypePropertyValue(
+                element,
+                flowPropertyStereo,
+                "direction",
+                TaggedValueCoercion.coerceForTag(project, flowPropertyStereo, "direction", value));
         return true;
     }
 

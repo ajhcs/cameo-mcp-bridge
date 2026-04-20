@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.3.2 - 2026-04-20
+
+Patch release focused on live-verifiable native matrix coverage, neutral methodology naming, and Codex workspace productization.
+
+### Added
+
+- A repo-local Codex plugin scaffold with marketplace metadata, MCP launcher wiring, and a verification-first live-validation skill
+- A neutral physical-architecture competency execution plan under `docs/plans/2026-04-20-physical-architecture-competency-plan.md`
+
+### Fixed
+
+- Repaired native `Refine Requirement Matrix` population by binding `Refine` relationships to the requirements-profile stereotype that Cameo's matrix criteria actually consume
+- Updated the live matrix regression harness to validate the live-proven activity-to-requirement refine shape instead of the earlier speculative row domains
+- Corrected `Dependency` ownership so generic dependency creation resolves to a package owner instead of trying to attach to arbitrary source elements
+- Removed course-specific `HW-12`, module, and assignment naming from the tracked code/docs surface in favor of neutral methodology/package terminology
+- Corrected stale README tool-count claims so the documented MCP surface matches the actual bridge capability manifest
+
+### Changed
+
+- Bumped the in-repo Python/plugin/methodology compatibility line to `2.3.2`
+
 ## 2.3.1 - 2026-04-13
 
 Patch release focused on hardening the new diagram-repair surface introduced in `2.3.0`.
@@ -19,7 +40,7 @@ Patch release focused on hardening the new diagram-repair surface introduced in 
 
 ## 2.3.0 - 2026-04-13
 
-Minor release focused on reducing end-to-end human intervention for review, cleanup, and assignment packaging workflows.
+Minor release focused on reducing end-to-end human intervention for review, cleanup, and methodology package workflows.
 
 ### Added
 
