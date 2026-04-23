@@ -7,7 +7,7 @@
 Make `cameo-mcp-bridge` operationally capable of:
 
 - creating and validating the full physical-architecture artifact family end to end
-- reproducing the relevant engineer workflows from the external reference corpus without baking course naming into the product
+- reproducing the relevant engineer workflows from the external reference corpus without baking source-specific naming into the product
 - proving correctness with live Cameo validation instead of static claims
 - staying token-efficient inside the Codex app through compact reads, review packets, and plugin-local guidance
 - shipping as a repo-local Codex plugin that can start the MCP server and steer agents into verification-first behavior
@@ -87,7 +87,7 @@ This plan supersedes the narrower physical-architecture-only scope. It treats ca
   - Live Codex plugin smoke in this workspace
 
 ## Sprint 2: Convert the Reference Corpus into a Regression Contract
-**Goal**: Turn the external captions, slides, and examples into explicit machine-checkable expectations without carrying their course naming into the repo.
+**Goal**: Turn the external captions, slides, and examples into explicit machine-checkable expectations without carrying source-specific naming into the repo.
 **Demo/Validation**:
 - Repo contains a checklist or fixture mapping each reference workflow to concrete artifacts, operations, and validators
 

@@ -9,7 +9,7 @@ deepened: 2026-04-12
 
 Date: 2026-04-12  
 Repo: `cameo-mcp-bridge`  
-Origin: MBSE reference transcript corpus in `/mnt/d/services/filebrowser/data/MBSE/` plus [DoD-Grade Advanced Capability Roadmap](../ideation/2026-03-30-dod-advanced-capabilities-roadmap.md)
+Origin: External MBSE reference transcript corpus retained outside this repository plus [DoD-Grade Advanced Capability Roadmap](../ideation/2026-03-30-dod-advanced-capabilities-roadmap.md)
 
 ## Problem Frame
 

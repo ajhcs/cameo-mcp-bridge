@@ -38,7 +38,7 @@ Use this skill when working against the local Cameo bridge in Codex.
 
 Use the repo's live scripts only when validating an end-to-end capability claim:
 
-- `mcp-server/scripts/live_validate_596def1.py`
+- `mcp-server/scripts/live_validate_bridge_surface.py`
 - `mcp-server/scripts/live_validate_flow_properties.py`
 - `mcp-server/scripts/live_validate_matrices.py`
 

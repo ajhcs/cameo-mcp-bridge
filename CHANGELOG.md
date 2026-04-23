@@ -1,8 +1,32 @@
 # Changelog
 
+## 2.3.4 - 2026-04-20
+
+Patch release focused on diagram-presentation cleanup controls needed for live artifact export and review workflows.
+
+### Added
+
+- A native `cameo_prune_diagram_presentations` repair endpoint/tool so clients can remove unwanted auto-displayed symbols from a diagram using keep/drop rules instead of deleting presentations one-by-one
+- A native `cameo_prune_path_decorations` repair endpoint/tool so clients can strip child path decorations such as association end-role labels while leaving the underlying relationship path intact
+
+### Fixed
+
+- Expanded normalized compartment controls so `cameo_set_shape_compartments` can drive SysML-specific compartments such as parts, content, references, full ports, flow properties, proxy ports, values, behaviors, receptions, and structure
+- Corrected `show*`/`suppress*` compartment alias resolution so `cameo_set_shape_compartments` actually maps client keys like `showParts`, `showAttributes`, and `showFlowProperties` onto Cameo's underlying `Suppress ...` properties
+- Corrected `Requirement Diagram` type resolution for physical requirements-diagram creation on the local Cameo build
+
+### Changed
+
+- Bumped the in-repo Python/plugin/methodology compatibility line to `2.3.4`
+- Updated release metadata and tracked validation/docs references to avoid local source-corpus details
+
 ## 2.3.3 - 2026-04-20
 
 Patch release that consolidates internal naming on neutral methodology terminology and cleans residual mentions from the tracked docs surface.
+
+### Fixed
+
+- Moved `ActivityPartition` add-to-diagram handling onto the native plugin route so raw REST and MCP clients create non-destructive swimlane presentations consistently
 
 ### Changed
 

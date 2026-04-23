@@ -8,7 +8,7 @@
   - connector and item-flow behavior
   - project-level artifact discovery
 - Treat these scripts as the current end-to-end smoke tools:
-  - `mcp-server/scripts/live_validate_596def1.py`
+  - `mcp-server/scripts/live_validate_bridge_surface.py`
   - `mcp-server/scripts/live_validate_flow_properties.py`
   - `mcp-server/scripts/live_validate_matrices.py`
 - Operational proof means:

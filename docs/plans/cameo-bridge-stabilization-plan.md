@@ -6,10 +6,10 @@
 ## Overview
 This plan hardens the post-`2.0.0` bridge and methodology stack after the live smoke uncovered several abstraction mismatches between the MCP surface and Cameo's actual APIs. The immediate stabilization tranche is now complete for activity partitions, activity edges, diagram path bindings, and live relationship reads. The remaining work is to reduce macro reliance, make operation results explicit instead of heuristic, align the generated OOSEM recipes with the MBSE demo expectations, and add a regression harness that catches these issues before release.
 
-The roadmap is grounded in the MBSE course artifacts under `H:\My Drive\ColeAJHCS_OS\School\MBSE EN.645.634`, especially:
-- `Module 8` for OOSEM setup and model structure expectations
-- `Module 9` for stakeholder-needs and demo workflow expectations
-- `Module 11` for the logical activity, logical port BDD, logical IBD, and requirements traceability flows
+The roadmap is grounded in an external MBSE reference corpus retained outside this repository, especially:
+- OOSEM setup and model structure expectations
+- stakeholder-needs and workflow expectations
+- logical activity, logical port BDD, logical IBD, and requirements traceability flows
 
 ## Prerequisites
 - Local Cameo / CATIA Magic install with plugin deploy access
@@ -103,21 +103,21 @@ The roadmap is grounded in the MBSE course artifacts under `H:\My Drive\ColeAJHC
   - Live relationship read probes
 
 ## Sprint 3: Align Recipes with MBSE Demo Expectations
-**Goal**: Make the generated OOSEM artifacts closer to the course/demo modeling intent so semantic findings reflect real gaps, not generator shortcuts.
+**Goal**: Make the generated OOSEM artifacts closer to the reference modeling intent so semantic findings reflect real gaps, not generator shortcuts.
 **Demo/Validation**:
-- Generate activity, logical port BDD, and logical IBD examples that resemble the Module 11 demo flows
+- Generate activity, logical port BDD, and logical IBD examples that resemble the reference workflow flows
 - Compare recipe outputs to expected traceability and flow structure
 
 ### Task 3.1: Refine Logical Activity Recipe Semantics
 - **Location**: `mcp-server/cameo_mcp/methodology/service.py`, `mcp-server/cameo_mcp/verification.py`
-- **Description**: Ensure the generated lower-level activity diagrams better match the intended decomposition style from the course materials, including performer allocation and data/control flow structure.
+- **Description**: Ensure the generated lower-level activity diagrams better match the intended decomposition style from the external reference material, including performer allocation and data/control flow structure.
 - **Dependencies**: Sprint 1 complete
 - **Acceptance Criteria**:
   - Generated activity recipes pass operational smoke
   - Semantic findings, if any, reflect genuine modeling gaps rather than generator omissions
 - **Validation**:
   - Live activity smoke
-  - Review packet inspection against `Module 11/Logical Activity Diagram...txt`
+  - Review packet inspection against the logical activity reference
 
 ### Task 3.2: Refine Logical Port BDD Generation
 - **Location**: `mcp-server/cameo_mcp/methodology/service.py`, `mcp-server/cameo_mcp/verification.py`
@@ -128,7 +128,7 @@ The roadmap is grounded in the MBSE course artifacts under `H:\My Drive\ColeAJHC
   - Validation guidance explains when same-name opposite-direction flows are acceptable vs problematic
 - **Validation**:
   - Live `logical_port_bdd` smoke
-  - Comparison against `Module 11/Logical Port BDD...txt`
+  - Comparison against the logical port BDD reference
 
 ### Task 3.3: Refine IBD Traceability Generation
 - **Location**: `mcp-server/cameo_mcp/methodology/service.py`, `mcp-server/cameo_mcp/verification.py`, `mcp-server/cameo_mcp/semantic_validation.py`
@@ -139,7 +139,7 @@ The roadmap is grounded in the MBSE course artifacts under `H:\My Drive\ColeAJHC
   - Default recipe output demonstrates the intended coverage chain
 - **Validation**:
   - Live `logical_ibd_traceability` smoke
-  - Comparison against `Module 11/Logical IBD...txt` and `11B Manage Requirements Traceability...txt`
+  - Comparison against the logical IBD and requirements traceability references
 
 ## Sprint 4: Add Release-Grade Regression Harness
 **Goal**: Catch bridge/modeling regressions before release by combining unit, integration, and live smoke validation.

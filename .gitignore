@@ -12,8 +12,12 @@ __pycache__/
 *.egg-info/
 .venv/
 *.pyc
+.pytest_cache/
 dist/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Local scratch artifacts
+tmp/

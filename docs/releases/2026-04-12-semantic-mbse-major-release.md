@@ -43,7 +43,7 @@ These recipes are intentionally bounded. They generate reviewable starters that 
 - Replaced the interface-flow-property macro read path with a native plugin endpoint so port-boundary and cross-diagram validation run on a typed Java bridge path
 - Fixed activity-edge creation and relationship reads so `logical_activity_flow` works cleanly on a live Cameo model instead of only under mocked tests
 - Added a guarded swimlane fallback for `ActivityPartition` placement while a first-class Java swimlane endpoint remains on the broader migration roadmap
-- Tightened traceability matching and port-direction conflict checks to better align with the Module 11 logical activity / logical port / logical IBD demo flow
+- Tightened traceability matching and port-direction conflict checks to better align with the logical activity / logical port / logical IBD reference flow
 - Completed a clean live smoke against a real Cameo session for:
   - `logical_activity_flow`
   - `logical_port_bdd`

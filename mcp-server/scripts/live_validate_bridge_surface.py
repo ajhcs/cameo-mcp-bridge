@@ -203,7 +203,7 @@ async def _resolve_sysml_profile_name(report: dict[str, Any]) -> str:
 
 async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
     report: dict[str, Any] = {
-        "runId": f"live-596def1-{int(time.time())}",
+        "runId": f"live-bridge-surface-{int(time.time())}",
         "checks": [],
         "artifacts": {},
         "cleanup": {
@@ -249,7 +249,7 @@ async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
             prefix,
             root_id,
             report,
-            documentation="Disposable package for live 596def1 validation.",
+            documentation="Disposable package for live bridge surface validation.",
         )
         validation_package_id = validation_package["id"]
         _append_check(
@@ -560,7 +560,7 @@ async def run_validation(keep_artifacts: bool) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run a live Cameo validation pass for the 596def1 bridge tranche.",
+        description="Run a live Cameo validation pass for the core bridge surface.",
     )
     parser.add_argument(
         "--keep-artifacts",
