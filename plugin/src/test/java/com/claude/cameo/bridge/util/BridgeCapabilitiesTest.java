@@ -18,8 +18,8 @@ public class BridgeCapabilitiesTest {
         assertEquals("CameoMCPBridge", status.get("plugin").getAsString());
         assertEquals("Cameo MCP Bridge", status.get("pluginName").getAsString());
         assertEquals("com.claude.cameo.bridge", status.get("pluginId").getAsString());
-        assertEquals("2.3.3", status.get("version").getAsString());
-        assertEquals("2.3.3", status.get("pluginVersion").getAsString());
+        assertEquals("2.3.4", status.get("version").getAsString());
+        assertEquals("2.3.4", status.get("pluginVersion").getAsString());
         assertEquals("v1", status.get("apiVersion").getAsString());
         assertEquals("1", status.get("handshakeVersion").getAsString());
         assertTrue(status.get("healthy").getAsBoolean());
@@ -27,7 +27,7 @@ public class BridgeCapabilitiesTest {
         JsonObject compatibility = status.getAsJsonObject("compatibility");
         assertNotNull(compatibility);
         assertTrue(compatibility.get("requiresExactPluginVersionMatch").getAsBoolean());
-        assertEquals("2.3.3", compatibility.get("expectedPluginVersion").getAsString());
+        assertEquals("2.3.4", compatibility.get("expectedPluginVersion").getAsString());
 
         JsonObject capabilities = status.getAsJsonObject("capabilities");
         assertNotNull(capabilities);
@@ -61,10 +61,12 @@ public class BridgeCapabilitiesTest {
                         && endpoints.toString().contains("cameo_set_transition_label_presentation")
                         && endpoints.toString().contains("cameo_set_item_flow_label_presentation")
                         && endpoints.toString().contains("cameo_set_allocation_compartment_presentation")
+                        && endpoints.toString().contains("cameo_prune_path_decorations")
                         && endpoints.toString().contains("cameo_repair_hidden_labels")
                         && endpoints.toString().contains("cameo_repair_label_positions")
                         && endpoints.toString().contains("cameo_repair_conveyed_item_labels")
                         && endpoints.toString().contains("cameo_normalize_compartment_presets")
+                        && endpoints.toString().contains("cameo_prune_diagram_presentations")
                         && endpoints.toString().contains("cameo_route_paths")
                         && endpoints.toString().contains("cameo_reparent_shapes")
                         && endpoints.toString().contains("cameo_set_usecase_subject"));

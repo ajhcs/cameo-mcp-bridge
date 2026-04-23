@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import os
 import re
 from collections import Counter
@@ -13,7 +12,7 @@ from typing import Any, Optional
 import httpx
 from PIL import Image
 
-BRIDGE_PLUGIN_VERSION = "2.3.3"
+BRIDGE_PLUGIN_VERSION = "2.3.4"
 BRIDGE_API_VERSION = "v1"
 BRIDGE_HANDSHAKE_VERSION = "1"
 
@@ -249,257 +248,6 @@ def _transform_diagram_image(
 def _base_url() -> str:
     port = os.environ.get("CAMEO_BRIDGE_PORT", "18740")
     return f"http://127.0.0.1:{port}/api/v1"
-
-
-def _json_literal(value: Any) -> str:
-    return json.dumps(value)
-
-
-def _is_activity_partition_element(metadata: dict[str, Any]) -> bool:
-    candidate_values = (
-        metadata.get("type"),
-        metadata.get("humanType"),
-    )
-    normalized = {
-        str(value).strip().lower().replace(" ", "")
-        for value in candidate_values
-        if value is not None
-    }
-    return "activitypartition" in normalized
-
-
-def _format_macro_failure(result: dict[str, Any]) -> str:
-    detail = str(result.get("error") or "macro execution failed")
-    output = str(result.get("output") or "")
-    if output:
-        detail += f"; output={output}"
-    return detail
-
-
-def _parse_macro_json_result(
-    result: dict[str, Any],
-    *,
-    context: str,
-) -> dict[str, Any]:
-    if not result.get("success"):
-        raise RuntimeError(f"{context}: {_format_macro_failure(result)}")
-
-    payload = result.get("result")
-    if not isinstance(payload, str):
-        raise RuntimeError(
-            f"{context}: macro returned a non-string result payload: {payload!r}"
-        )
-
-    try:
-        parsed = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"{context}: macro returned invalid JSON: {payload!r}"
-        ) from exc
-
-    if not isinstance(parsed, dict):
-        raise RuntimeError(
-            f"{context}: macro returned a non-object JSON payload: {parsed!r}"
-        )
-    return parsed
-
-
-def _activity_partition_add_script(
-    diagram_id: str,
-    element_id: str,
-    *,
-    x: Optional[int],
-    y: Optional[int],
-    width: Optional[int],
-    height: Optional[int],
-) -> str:
-    return f"""
-import com.google.gson.GsonBuilder
-import com.nomagic.magicdraw.openapi.uml.PresentationElementsManager
-import com.nomagic.magicdraw.openapi.uml.SessionManager
-import java.awt.Rectangle
-
-def gson = new GsonBuilder().disableHtmlEscaping().create()
-def diagramId = {_json_literal(diagram_id)}
-def partitionId = {_json_literal(element_id)}
-def requestedX = {_json_literal(x)}
-def requestedY = {_json_literal(y)}
-def requestedWidth = {_json_literal(width)}
-def requestedHeight = {_json_literal(height)}
-
-def diagram = project.getElementByID(diagramId)
-if (diagram == null) {{
-    throw new IllegalArgumentException("Diagram not found: " + diagramId)
-}}
-def dpe = project.getDiagram(diagram)
-if (dpe == null) {{
-    throw new IllegalArgumentException("Diagram presentation not found: " + diagramId)
-}}
-dpe.ensureLoaded()
-
-def partition = project.getElementByID(partitionId)
-if (partition == null) {{
-    throw new IllegalArgumentException("Activity partition not found: " + partitionId)
-}}
-
-def findPartitionPresentation
-findPartitionPresentation = {{ elements, targetId ->
-    def fallback = null
-    for (pe in (elements ?: [])) {{
-        def peElement = null
-        try {{
-            peElement = pe?.element
-        }} catch (ignored) {{}}
-        if (peElement != null && targetId == peElement.ID) {{
-            def className = pe.getClass().getSimpleName()
-            if (className == "SwimlaneHeaderView") {{
-                return pe
-            }}
-            if (fallback == null
-                    && (className.contains("Swimlane") || className.contains("Partition"))) {{
-                fallback = pe
-            }}
-        }}
-        def nested = findPartitionPresentation(pe?.presentationElements, targetId)
-        if (nested != null) {{
-            return nested
-        }}
-    }}
-    return fallback
-}}
-
-def findFirstSwimlane
-findFirstSwimlane = {{ elements ->
-    for (pe in (elements ?: [])) {{
-        if (pe.getClass().getSimpleName() == "SwimlaneView") {{
-            return pe
-        }}
-        def nested = findFirstSwimlane(pe?.presentationElements)
-        if (nested != null) {{
-            return nested
-        }}
-    }}
-    return null
-}}
-
-def existingPartitionPresentation = findPartitionPresentation(dpe.getPresentationElements(), partitionId)
-if (existingPartitionPresentation != null) {{
-    def bounds = existingPartitionPresentation.getBounds()
-    return gson.toJson([
-        diagramId: diagramId,
-        elementId: partitionId,
-        x: bounds?.x,
-        y: bounds?.y,
-        width: bounds?.width,
-        height: bounds?.height,
-        added: true,
-        presentationId: existingPartitionPresentation.ID,
-        receipt: [
-            operation: "addShape",
-            diagramId: diagramId,
-            elementId: partitionId,
-            presentationId: existingPartitionPresentation.ID,
-            status: "existing",
-            activityPartitionFallback: true,
-        ],
-    ])
-}}
-
-def siblingPartitions = []
-for (owned in (partition.owner?.ownedElement ?: [])) {{
-    if (owned?.getClass()?.getSimpleName() == "ActivityPartition") {{
-        siblingPartitions << owned
-    }}
-}}
-if (siblingPartitions.isEmpty()) {{
-    siblingPartitions << partition
-}}
-
-def existingSwimlane = findFirstSwimlane(dpe.getPresentationElements())
-def existingBounds = existingSwimlane?.getBounds()
-int laneCount = Math.max(siblingPartitions.size(), 1)
-int laneWidth = requestedWidth != null ? requestedWidth.intValue()
-    : (existingBounds != null ? Math.max((int) (existingBounds.width / laneCount), 1) : 220)
-int totalWidth = requestedWidth != null ? laneWidth * laneCount
-    : (existingBounds != null ? existingBounds.width : laneWidth * laneCount)
-int totalHeight = requestedHeight != null ? requestedHeight.intValue()
-    : (existingBounds != null ? existingBounds.height : 280)
-int targetX = requestedX != null ? requestedX.intValue() : (existingBounds != null ? existingBounds.x : 100)
-int targetY = requestedY != null ? requestedY.intValue() : (existingBounds != null ? existingBounds.y : 100)
-
-if (existingSwimlane != null) {{
-    throw new IllegalStateException(
-        "Activity partition diagram fallback found an existing swimlane but could not "
-        + "locate a presentation for partition " + partitionId + ". Refusing to rebuild "
-        + "the entire swimlane container automatically."
-    )
-}}
-
-def pem = PresentationElementsManager.getInstance()
-def sm = SessionManager.getInstance()
-sm.createSession(project, "MCP Add Activity Partition Swimlane")
-try {{
-    def swimlane = pem.createSwimlane([], siblingPartitions, dpe)
-    if (swimlane == null) {{
-        throw new IllegalStateException("Failed to create swimlane for activity partition: " + partitionId)
-    }}
-    pem.reshapeShapeElement(swimlane, new Rectangle(targetX, targetY, totalWidth, totalHeight))
-    sm.closeSession(project)
-}} catch (Exception e) {{
-    sm.cancelSession(project)
-    throw e
-}}
-
-def createdPartitionPresentation = findPartitionPresentation(dpe.getPresentationElements(), partitionId)
-if (createdPartitionPresentation == null) {{
-    throw new IllegalStateException(
-        "Failed to locate the created swimlane presentation for activity partition: " + partitionId
-    )
-}}
-def createdBounds = createdPartitionPresentation.getBounds()
-return gson.toJson([
-    diagramId: diagramId,
-    elementId: partitionId,
-    x: createdBounds?.x,
-    y: createdBounds?.y,
-    width: createdBounds?.width,
-    height: createdBounds?.height,
-    added: true,
-    presentationId: createdPartitionPresentation.ID,
-    receipt: [
-        operation: "addShape",
-        diagramId: diagramId,
-        elementId: partitionId,
-        presentationId: createdPartitionPresentation.ID,
-        status: "created",
-        activityPartitionFallback: true,
-    ],
-])
-""".strip()
-
-
-async def _add_activity_partition_to_diagram_via_macro(
-    diagram_id: str,
-    element_id: str,
-    *,
-    x: Optional[int],
-    y: Optional[int],
-    width: Optional[int],
-    height: Optional[int],
-) -> dict[str, Any]:
-    script = _activity_partition_add_script(
-        diagram_id,
-        element_id,
-        x=x,
-        y=y,
-        width=width,
-        height=height,
-    )
-    result = await execute_macro(script)
-    return _parse_macro_json_result(
-        result,
-        context="Activity partition diagram fallback",
-    )
 
 
 # Module-level singleton client for connection pooling and keepalive
@@ -1038,18 +786,6 @@ async def add_to_diagram(
             "width and height must both be non-negative, or both be omitted/negative"
         )
 
-    if container_presentation_id is None:
-        element = await get_element(element_id)
-        if _is_activity_partition_element(element):
-            return await _add_activity_partition_to_diagram_via_macro(
-                diagram_id,
-                element_id,
-                x=x,
-                y=y,
-                width=width if has_explicit_width else None,
-                height=height if has_explicit_height else None,
-            )
-
     body: dict[str, Any] = {"elementId": element_id}
     if x is not None:
         body["x"] = x
@@ -1330,6 +1066,55 @@ async def normalize_compartment_presets(
     return await _request(
         "PUT",
         f"/diagrams/{diagram_id}/repair/compartment-presets",
+        json_body=body,
+    )
+
+
+async def prune_diagram_presentations(
+    diagram_id: str,
+    *,
+    keep_element_ids: Optional[list[str]] = None,
+    drop_element_types: Optional[list[str]] = None,
+    drop_shape_types: Optional[list[str]] = None,
+    exclude_element_ids: Optional[list[str]] = None,
+    exclude_presentation_ids: Optional[list[str]] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Delete unwanted diagram presentations using keep/drop rules."""
+    body: dict[str, Any] = {"dryRun": dry_run}
+    if keep_element_ids is not None:
+        body["keepElementIds"] = keep_element_ids
+    if drop_element_types is not None:
+        body["dropElementTypes"] = drop_element_types
+    if drop_shape_types is not None:
+        body["dropShapeTypes"] = drop_shape_types
+    if exclude_element_ids is not None:
+        body["excludeElementIds"] = exclude_element_ids
+    if exclude_presentation_ids is not None:
+        body["excludePresentationIds"] = exclude_presentation_ids
+    return await _request(
+        "PUT",
+        f"/diagrams/{diagram_id}/repair/prune-presentations",
+        json_body=body,
+    )
+
+
+async def prune_path_decorations(
+    diagram_id: str,
+    *,
+    presentation_ids: Optional[list[str]] = None,
+    drop_child_shape_types: Optional[list[str]] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Delete child path decorations such as association end-role labels."""
+    body: dict[str, Any] = {"dryRun": dry_run}
+    if presentation_ids is not None:
+        body["presentationIds"] = presentation_ids
+    if drop_child_shape_types is not None:
+        body["dropChildShapeTypes"] = drop_child_shape_types
+    return await _request(
+        "PUT",
+        f"/diagrams/{diagram_id}/repair/path-decorations",
         json_body=body,
     )
 

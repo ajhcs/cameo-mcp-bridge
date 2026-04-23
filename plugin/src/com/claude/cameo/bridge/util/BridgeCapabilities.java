@@ -15,7 +15,7 @@ public final class BridgeCapabilities {
 
     public static final String PLUGIN_ID = "com.claude.cameo.bridge";
     public static final String PLUGIN_NAME = "Cameo MCP Bridge";
-    public static final String PLUGIN_VERSION = "2.3.3";
+    public static final String PLUGIN_VERSION = "2.3.4";
     public static final String API_VERSION = "v1";
     public static final String HANDSHAKE_VERSION = "1";
     public static final String LEGACY_STATUS_PATH = "/status";
@@ -61,10 +61,12 @@ public final class BridgeCapabilities {
             new Capability("diagrams", "cameo_set_transition_label_presentation", "PUT", "/api/v1/diagrams/{diagramId}/presentation/transition-labels", "write"),
             new Capability("diagrams", "cameo_set_item_flow_label_presentation", "PUT", "/api/v1/diagrams/{diagramId}/presentation/item-flow-labels", "write"),
             new Capability("diagrams", "cameo_set_allocation_compartment_presentation", "PUT", "/api/v1/diagrams/{diagramId}/presentation/allocation-compartments", "write"),
+            new Capability("diagrams", "cameo_prune_path_decorations", "PUT", "/api/v1/diagrams/{diagramId}/repair/path-decorations", "write"),
             new Capability("diagrams", "cameo_repair_hidden_labels", "PUT", "/api/v1/diagrams/{diagramId}/repair/hidden-labels", "write"),
             new Capability("diagrams", "cameo_repair_label_positions", "PUT", "/api/v1/diagrams/{diagramId}/repair/label-positions", "write"),
             new Capability("diagrams", "cameo_repair_conveyed_item_labels", "PUT", "/api/v1/diagrams/{diagramId}/repair/conveyed-item-labels", "write"),
             new Capability("diagrams", "cameo_normalize_compartment_presets", "PUT", "/api/v1/diagrams/{diagramId}/repair/compartment-presets", "write"),
+            new Capability("diagrams", "cameo_prune_diagram_presentations", "PUT", "/api/v1/diagrams/{diagramId}/repair/prune-presentations", "write"),
             new Capability("diagrams", "cameo_reparent_shapes", "PUT", "/api/v1/diagrams/{diagramId}/shapes/reparent", "write"),
             new Capability("diagrams", "cameo_route_paths", "PUT", "/api/v1/diagrams/{diagramId}/paths/route", "write"),
             new Capability("specification", "cameo_get_specification", "GET", "/api/v1/elements/{elementId}/specification", "read"),

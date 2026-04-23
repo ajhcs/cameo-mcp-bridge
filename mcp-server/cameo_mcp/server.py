@@ -1984,7 +1984,12 @@ async def cameo_set_shape_compartments(
     presentation_id: str,
     compartments: dict,
 ) -> dict[str, Any]:
-    """Apply normalized compartment visibility controls to one diagram shape."""
+    """Apply normalized compartment visibility controls to one diagram shape.
+
+    Common keys include `showAttributes`, `showOperations`, `showPorts`,
+    `showParts`, `showContent`, `showReferences`, `showFullPorts`,
+    `showFlowProperties`, `showProxyPorts`, and `showValues`.
+    """
     result = await client.set_shape_compartments(
         diagram_id=diagram_id,
         presentation_id=presentation_id,
@@ -2129,6 +2134,57 @@ async def cameo_normalize_compartment_presets(
     result = await client.normalize_compartment_presets(
         diagram_id,
         presentation_ids=presentation_ids,
+        dry_run=dry_run,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_prune_diagram_presentations(
+    diagram_id: DiagramIdArg,
+    keep_element_ids: Optional[list[str]] = None,
+    drop_element_types: Optional[list[str]] = None,
+    drop_shape_types: Optional[list[str]] = None,
+    exclude_element_ids: Optional[list[str]] = None,
+    exclude_presentation_ids: Optional[list[str]] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Delete unwanted diagram presentations using keep/drop rules.
+
+    Use this when Cameo auto-displays extra relationship symbols or other
+    unwanted presentations after adding elements to a diagram. The most useful
+    pattern is usually `keep_element_ids=[...]` to retain only the model
+    elements you explicitly want visible before you add controlled paths or
+    labels.
+    """
+    result = await client.prune_diagram_presentations(
+        diagram_id,
+        keep_element_ids=keep_element_ids,
+        drop_element_types=drop_element_types,
+        drop_shape_types=drop_shape_types,
+        exclude_element_ids=exclude_element_ids,
+        exclude_presentation_ids=exclude_presentation_ids,
+        dry_run=dry_run,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_prune_path_decorations(
+    diagram_id: DiagramIdArg,
+    presentation_ids: Optional[list[str]] = None,
+    drop_child_shape_types: Optional[list[str]] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Prune child path decorations such as association end-role labels.
+
+    Use this when the path itself should stay visible but its auto-displayed
+    role/end decorations are cluttering the diagram.
+    """
+    result = await client.prune_path_decorations(
+        diagram_id,
+        presentation_ids=presentation_ids,
+        drop_child_shape_types=drop_child_shape_types,
         dry_run=dry_run,
     )
     return _mcp_result(result)

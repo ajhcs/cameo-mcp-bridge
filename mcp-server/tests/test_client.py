@@ -149,10 +149,7 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_add_to_diagram_omits_negative_auto_size_dimensions(self) -> None:
-        with patch(
-            "cameo_mcp.client.get_element",
-            new=AsyncMock(return_value={"type": "OpaqueAction", "humanType": "Opaque Action"}),
-        ), patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
             await client.add_to_diagram(
                 diagram_id="dia-1",
                 element_id="el-1",
@@ -169,10 +166,7 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_add_to_diagram_keeps_explicit_dimensions(self) -> None:
-        with patch(
-            "cameo_mcp.client.get_element",
-            new=AsyncMock(return_value={"type": "OpaqueAction", "humanType": "Opaque Action"}),
-        ), patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
             await client.add_to_diagram(
                 diagram_id="dia-1",
                 element_id="el-1",
@@ -195,16 +189,10 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
                 height=180,
             )
 
-    async def test_add_to_diagram_uses_macro_fallback_for_activity_partitions(self) -> None:
+    async def test_add_to_diagram_uses_rest_path_for_activity_partitions(self) -> None:
         with patch(
-            "cameo_mcp.client.get_element",
-            new=AsyncMock(return_value={"type": "ActivityPartition", "humanType": "Activity Partition"}),
-        ), patch(
-            "cameo_mcp.client._add_activity_partition_to_diagram_via_macro",
-            new=AsyncMock(return_value={"added": True, "presentationId": "pe-partition"}),
-        ) as fallback, patch(
             "cameo_mcp.client._request",
-            new=AsyncMock(return_value={"added": True}),
+            new=AsyncMock(return_value={"added": True, "presentationId": "pe-partition"}),
         ) as request:
             result = await client.add_to_diagram(
                 diagram_id="dia-1",
@@ -216,50 +204,14 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual("pe-partition", result["presentationId"])
-        fallback.assert_awaited_once_with(
-            "dia-1",
-            "partition-1",
-            x=80,
-            y=120,
-            width=220,
-            height=320,
+        request.assert_awaited_once()
+        self.assertEqual(
+            {"elementId": "partition-1", "x": 80, "y": 120, "width": 220, "height": 320},
+            request.await_args.kwargs["json_body"],
         )
-        request.assert_not_awaited()
-
-    def test_activity_partition_fallback_script_uses_integer_rectangle_dimensions(self) -> None:
-        script = client._activity_partition_add_script(
-            "dia-1",
-            "partition-1",
-            x=80,
-            y=120,
-            width=220,
-            height=320,
-        )
-
-        self.assertIn("int laneCount =", script)
-        self.assertIn("int totalWidth =", script)
-        self.assertIn("int totalHeight =", script)
-        self.assertIn("new Rectangle(targetX, targetY, totalWidth, totalHeight)", script)
-
-    def test_activity_partition_fallback_script_refuses_destructive_swimlane_rebuild(self) -> None:
-        script = client._activity_partition_add_script(
-            "dia-1",
-            "partition-1",
-            x=None,
-            y=None,
-            width=None,
-            height=None,
-        )
-
-        self.assertNotIn("deletePresentationElement(existingSwimlane)", script)
-        self.assertIn("Refusing to rebuild", script)
-        self.assertIn("findPartitionPresentation", script)
 
     async def test_add_to_diagram_keeps_rest_path_for_non_partition_elements(self) -> None:
-        with patch(
-            "cameo_mcp.client.get_element",
-            new=AsyncMock(return_value={"type": "OpaqueAction", "humanType": "Opaque Action"}),
-        ), patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"added": True})) as request:
             await client.add_to_diagram(
                 diagram_id="dia-1",
                 element_id="el-1",
@@ -788,6 +740,50 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 "presentationIds": ["pe-1"],
+                "dryRun": True,
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_prune_diagram_presentations_builds_request_body(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"deletedCount": 2})) as request:
+            await client.prune_diagram_presentations(
+                "dia-1",
+                keep_element_ids=["el-1", "el-2"],
+                drop_element_types=["Item Flow"],
+                drop_shape_types=["ConnectorEndView"],
+                exclude_element_ids=["el-safe"],
+                exclude_presentation_ids=["pe-safe"],
+                dry_run=True,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual(
+            {
+                "dryRun": True,
+                "keepElementIds": ["el-1", "el-2"],
+                "dropElementTypes": ["Item Flow"],
+                "dropShapeTypes": ["ConnectorEndView"],
+                "excludeElementIds": ["el-safe"],
+                "excludePresentationIds": ["pe-safe"],
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_prune_path_decorations_builds_request_body(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"deletedDecorationCount": 2})) as request:
+            await client.prune_path_decorations(
+                "dia-1",
+                presentation_ids=["pe-1"],
+                drop_child_shape_types=["RoleView", "TextBoxView"],
+                dry_run=True,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual(
+            {
+                "presentationIds": ["pe-1"],
+                "dropChildShapeTypes": ["RoleView", "TextBoxView"],
                 "dryRun": True,
             },
             request.await_args.kwargs["json_body"],

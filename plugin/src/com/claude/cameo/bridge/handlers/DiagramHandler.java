@@ -1,6 +1,7 @@
 package com.claude.cameo.bridge.handlers;
 
 import com.claude.cameo.bridge.HttpBridgeServer;
+import com.claude.cameo.bridge.util.CompartmentAliasResolver;
 import com.claude.cameo.bridge.util.EdtDispatcher;
 import com.claude.cameo.bridge.util.ElementSerializer;
 import com.claude.cameo.bridge.util.JsonHelper;
@@ -19,6 +20,7 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Diagram;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Namespace;
+import com.nomagic.uml2.ext.magicdraw.activities.mdintermediateactivities.ActivityPartition;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.google.gson.JsonArray;
@@ -37,6 +39,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -122,6 +125,8 @@ public class DiagramHandler implements HttpHandler {
                     handleConfigureTransitionLabelPresentation(exchange, diagramId);
                 } else if (diagramId != null && "presentation/item-flow-labels".equals(subPath)) {
                     handleConfigureItemFlowLabelPresentation(exchange, diagramId);
+                } else if (diagramId != null && "repair/path-decorations".equals(subPath)) {
+                    handlePrunePathDecorations(exchange, diagramId);
                 } else if (diagramId != null && "presentation/allocation-compartments".equals(subPath)) {
                     handleConfigureAllocationCompartmentPresentation(exchange, diagramId);
                 } else if (diagramId != null && "repair/hidden-labels".equals(subPath)) {
@@ -132,6 +137,8 @@ public class DiagramHandler implements HttpHandler {
                     handleForceConveyedItemLabels(exchange, diagramId);
                 } else if (diagramId != null && "repair/compartment-presets".equals(subPath)) {
                     handleNormalizeCompartmentPresets(exchange, diagramId);
+                } else if (diagramId != null && "repair/prune-presentations".equals(subPath)) {
+                    handlePrunePresentations(exchange, diagramId);
                 } else {
                     HttpBridgeServer.sendError(exchange, 404, "NOT_FOUND",
                             "Unknown endpoint: " + path);
@@ -328,8 +335,10 @@ public class DiagramHandler implements HttpHandler {
         }
 
         String elementId = body.get("elementId").getAsString();
-        int x = body.has("x") ? body.get("x").getAsInt() : 100;
-        int y = body.has("y") ? body.get("y").getAsInt() : 100;
+        Integer requestedX = body.has("x") ? body.get("x").getAsInt() : null;
+        Integer requestedY = body.has("y") ? body.get("y").getAsInt() : null;
+        int x = requestedX != null ? requestedX : 100;
+        int y = requestedY != null ? requestedY : 100;
         String containerPeId = JsonHelper.optionalString(body, "containerPresentationId");
         boolean hasWidth = body.has("width");
         boolean hasHeight = body.has("height");
@@ -339,6 +348,8 @@ public class DiagramHandler implements HttpHandler {
                     "Request body must include both width and height, or neither");
             return;
         }
+        Integer requestedWidth = hasWidth ? body.get("width").getAsInt() : null;
+        Integer requestedHeight = hasHeight ? body.get("height").getAsInt() : null;
 
         JsonObject result = EdtDispatcher.write("MCP Bridge: Add Element to Diagram", project -> {
             DiagramPresentationElement dpe = findDiagramById(project, diagramId);
@@ -359,32 +370,35 @@ public class DiagramHandler implements HttpHandler {
             } else {
                 shapeParent = dpe;
             }
-            ShapeElement shape = pem.createShapeElement(element, shapeParent, true, new Point(x, y));
-
-            if (shape == null) {
-                throw new IllegalStateException(
-                        "Failed to create shape for element: " + elementId);
-            }
-
-            if (hasWidth && hasHeight) {
-                int width = body.get("width").getAsInt();
-                int height = body.get("height").getAsInt();
-                pem.reshapeShapeElement(shape, new Rectangle(x, y, width, height));
-            }
+            DiagramAddResult addResult = addElementPresentation(
+                    dpe,
+                    element,
+                    shapeParent,
+                    pem,
+                    requestedX,
+                    requestedY,
+                    requestedWidth,
+                    requestedHeight);
+            ShapeElement shape = addResult.shape;
 
             JsonObject response = new JsonObject();
             response.addProperty("diagramId", diagramId);
             response.addProperty("elementId", elementId);
-            response.addProperty("x", x);
-            response.addProperty("y", y);
+            Rectangle bounds = null;
             try {
-                Rectangle bounds = shape.getBounds();
+                bounds = shape.getBounds();
                 if (bounds != null) {
+                    response.addProperty("x", bounds.x);
+                    response.addProperty("y", bounds.y);
                     response.addProperty("width", bounds.width);
                     response.addProperty("height", bounds.height);
                 }
             } catch (Exception e) {
                 // Bounds may not be available for all shape types
+            }
+            if (bounds == null) {
+                response.addProperty("x", x);
+                response.addProperty("y", y);
             }
             response.addProperty("added", true);
             response.addProperty("presentationId", shape.getID());
@@ -397,18 +411,212 @@ public class DiagramHandler implements HttpHandler {
             if (containerPeId != null) {
                 receipt.addProperty("containerPresentationId", containerPeId);
             }
-            receipt.addProperty("x", x);
-            receipt.addProperty("y", y);
-            if (hasWidth && hasHeight) {
-                receipt.addProperty("width", body.get("width").getAsInt());
-                receipt.addProperty("height", body.get("height").getAsInt());
+            if (bounds != null) {
+                receipt.addProperty("x", bounds.x);
+                receipt.addProperty("y", bounds.y);
+                receipt.addProperty("width", bounds.width);
+                receipt.addProperty("height", bounds.height);
+            } else {
+                receipt.addProperty("x", x);
+                receipt.addProperty("y", y);
+                if (requestedWidth != null && requestedHeight != null) {
+                    receipt.addProperty("width", requestedWidth);
+                    receipt.addProperty("height", requestedHeight);
+                }
             }
-            receipt.addProperty("status", "created");
+            receipt.addProperty("status", addResult.status);
+            if (addResult.activityPartitionNative) {
+                receipt.addProperty("activityPartitionNative", true);
+            }
             response.add("receipt", receipt);
             return response;
         });
 
         HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
+    private DiagramAddResult addElementPresentation(
+            DiagramPresentationElement dpe,
+            Element element,
+            PresentationElement shapeParent,
+            PresentationElementsManager pem,
+            Integer requestedX,
+            Integer requestedY,
+            Integer requestedWidth,
+            Integer requestedHeight) throws Exception {
+        int x = requestedX != null ? requestedX : 100;
+        int y = requestedY != null ? requestedY : 100;
+
+        if (element instanceof ActivityPartition) {
+            if (shapeParent != dpe) {
+                throw new IllegalStateException(
+                        "ActivityPartition insertion through containerPresentationId is not supported; "
+                                + "omit containerPresentationId and let the bridge create or resolve "
+                                + "the swimlane container natively.");
+            }
+            return addActivityPartitionPresentation(
+                    dpe,
+                    (ActivityPartition) element,
+                    pem,
+                    requestedX,
+                    requestedY,
+                    requestedWidth,
+                    requestedHeight);
+        }
+
+        ShapeElement shape = pem.createShapeElement(element, shapeParent, true, new Point(x, y));
+        if (shape == null) {
+            throw new IllegalStateException(
+                    "Failed to create shape for element: " + element.getID());
+        }
+        if (requestedWidth != null && requestedHeight != null) {
+            pem.reshapeShapeElement(shape, new Rectangle(x, y, requestedWidth, requestedHeight));
+        }
+        return new DiagramAddResult(shape, "created", false);
+    }
+
+    private DiagramAddResult addActivityPartitionPresentation(
+            DiagramPresentationElement dpe,
+            ActivityPartition partition,
+            PresentationElementsManager pem,
+            Integer requestedX,
+            Integer requestedY,
+            Integer requestedWidth,
+            Integer requestedHeight) throws Exception {
+        PresentationElement existingPartition = findActivityPartitionPresentation(
+                dpe.getPresentationElements(),
+                partition.getID());
+        if (existingPartition != null) {
+            return new DiagramAddResult(
+                    requireShapeElement(
+                            existingPartition,
+                            "Existing activity partition presentation is not a shape"),
+                    "existing",
+                    true);
+        }
+
+        ShapeElement existingSwimlane = findFirstSwimlane(dpe.getPresentationElements());
+        if (existingSwimlane != null) {
+            throw new IllegalStateException(
+                    "Activity partition add-to-diagram found an existing swimlane but could not "
+                            + "locate a presentation for partition " + partition.getID()
+                            + ". Refusing to rebuild the entire swimlane container automatically.");
+        }
+
+        List<ActivityPartition> siblingPartitions = collectSiblingPartitions(partition);
+        int laneCount = Math.max(siblingPartitions.size(), 1);
+        int laneWidth = requestedWidth != null ? requestedWidth : 220;
+        int totalWidth = requestedWidth != null ? laneWidth * laneCount : laneWidth * laneCount;
+        int totalHeight = requestedHeight != null ? requestedHeight : 280;
+        int targetX = requestedX != null ? requestedX : 100;
+        int targetY = requestedY != null ? requestedY : 100;
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        ShapeElement swimlane = pem.createSwimlane(
+                Collections.emptyList(),
+                new ArrayList(siblingPartitions),
+                dpe);
+        if (swimlane == null) {
+            throw new IllegalStateException(
+                    "Failed to create swimlane for activity partition: " + partition.getID());
+        }
+        pem.reshapeShapeElement(swimlane, new Rectangle(targetX, targetY, totalWidth, totalHeight));
+
+        PresentationElement createdPartition = findActivityPartitionPresentation(
+                dpe.getPresentationElements(),
+                partition.getID());
+        if (createdPartition == null) {
+            throw new IllegalStateException(
+                    "Failed to locate the created swimlane presentation for activity partition: "
+                            + partition.getID());
+        }
+
+        return new DiagramAddResult(
+                requireShapeElement(
+                        createdPartition,
+                        "Created activity partition presentation is not a shape"),
+                "created",
+                true);
+    }
+
+    private List<ActivityPartition> collectSiblingPartitions(ActivityPartition partition) {
+        Element owner = partition.getOwner();
+        if (owner == null) {
+            return Collections.singletonList(partition);
+        }
+
+        List<ActivityPartition> partitions = new ArrayList<>();
+        for (Element owned : owner.getOwnedElement()) {
+            if (owned instanceof ActivityPartition) {
+                partitions.add((ActivityPartition) owned);
+            }
+        }
+        if (partitions.isEmpty()) {
+            partitions.add(partition);
+        } else if (!partitions.contains(partition)) {
+            partitions.add(partition);
+        }
+        return partitions;
+    }
+
+    private PresentationElement findActivityPartitionPresentation(
+            List<PresentationElement> elements,
+            String targetElementId) {
+        if (elements == null || targetElementId == null) {
+            return null;
+        }
+
+        PresentationElement fallback = null;
+        for (PresentationElement pe : elements) {
+            Element peElement = null;
+            try {
+                peElement = pe.getElement();
+            } catch (Exception ignored) {
+                // Some presentation elements do not expose a backing element.
+            }
+
+            if (peElement != null && targetElementId.equals(peElement.getID())) {
+                String className = pe.getClass().getSimpleName();
+                if ("SwimlaneHeaderView".equals(className)) {
+                    return pe;
+                }
+                if (fallback == null
+                        && (className.contains("Swimlane") || className.contains("Partition"))) {
+                    fallback = pe;
+                }
+            }
+
+            PresentationElement nested = findActivityPartitionPresentation(
+                    pe.getPresentationElements(),
+                    targetElementId);
+            if (nested != null) {
+                return nested;
+            }
+        }
+        return fallback;
+    }
+
+    private ShapeElement findFirstSwimlane(List<PresentationElement> elements) {
+        if (elements == null) {
+            return null;
+        }
+        for (PresentationElement pe : elements) {
+            if ("SwimlaneView".equals(pe.getClass().getSimpleName())) {
+                return requireShapeElement(pe, "Swimlane presentation is not a shape");
+            }
+            ShapeElement nested = findFirstSwimlane(pe.getPresentationElements());
+            if (nested != null) {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    private ShapeElement requireShapeElement(PresentationElement pe, String message) {
+        if (pe instanceof ShapeElement) {
+            return (ShapeElement) pe;
+        }
+        throw new IllegalStateException(message);
     }
 
     private void handleLayout(HttpExchange exchange, String diagramId) throws Exception {
@@ -1167,6 +1375,176 @@ public class DiagramHandler implements HttpHandler {
         HttpBridgeServer.sendJson(exchange, 200, result);
     }
 
+    private void handlePrunePathDecorations(
+            HttpExchange exchange,
+            String diagramId) throws Exception {
+        JsonObject body = JsonHelper.parseBody(exchange);
+        List<String> presentationIds = JsonHelper.optionalStringList(body, "presentationIds");
+        List<String> dropChildShapeTypes = JsonHelper.optionalStringList(body, "dropChildShapeTypes");
+        boolean dryRun = readBoolean(body, "dryRun", false);
+
+        List<String> effectiveDropShapeTypes = (dropChildShapeTypes == null || dropChildShapeTypes.isEmpty())
+                ? List.of("RoleView")
+                : new ArrayList<>(dropChildShapeTypes);
+
+        JsonObject result = EdtDispatcher.write("MCP Bridge: Prune Path Decorations", project -> {
+            DiagramPresentationElement dpe = findDiagramById(project, diagramId);
+            dpe.ensureLoaded();
+
+            String diagramType = diagramTypeName(dpe);
+            PresentationSelection selection = selectPresentationElementsWithErrors(
+                    dpe.getPresentationElements(),
+                    presentationIds,
+                    pe -> pe instanceof PathElement,
+                    "Presentation element is not a path");
+
+            PresentationElementsManager pem = PresentationElementsManager.getInstance();
+            JsonArray results = new JsonArray();
+            appendResults(results, selection.errors);
+            int deletedDecorationCount = 0;
+
+            for (PresentationElement target : selection.targets) {
+                JsonObject entry = describePresentationElement(target, null);
+                entry.addProperty("repairMode", "path-decorations");
+                JsonArray requestedTypes = new JsonArray();
+                for (String shapeType : effectiveDropShapeTypes) {
+                    requestedTypes.add(shapeType);
+                }
+                entry.add("dropChildShapeTypes", requestedTypes);
+
+                List<PresentationElement> descendants = new ArrayList<>();
+                Map<String, String> parentById = new LinkedHashMap<>();
+                collectPresentationElements(target.getPresentationElements(), descendants, parentById, target.getID());
+
+                LinkedHashSet<String> matchedIds = new LinkedHashSet<>();
+                for (PresentationElement descendant : descendants) {
+                    if (matchesAnyShapeTypeToken(descendant, effectiveDropShapeTypes)) {
+                        matchedIds.add(descendant.getID());
+                    }
+                }
+
+                JsonArray decorations = new JsonArray();
+                int deletedForTarget = 0;
+                int errorsForTarget = 0;
+                for (PresentationElement descendant : descendants) {
+                    String presentationId = descendant.getID();
+                    if (!matchedIds.contains(presentationId)) {
+                        continue;
+                    }
+
+                    String parentId = parentById.get(presentationId);
+                    if (parentId != null && matchedIds.contains(parentId)) {
+                        continue;
+                    }
+
+                    List<PresentationElement> deletionOrder = new ArrayList<>();
+                    List<PresentationElement> subtree = new ArrayList<>();
+                    Map<String, String> subtreeParents = new LinkedHashMap<>();
+                    collectPresentationElements(
+                            descendant.getPresentationElements(),
+                            subtree,
+                            subtreeParents,
+                            descendant.getID());
+                    Collections.reverse(subtree);
+                    deletionOrder.addAll(subtree);
+                    deletionOrder.add(descendant);
+
+                    LinkedHashSet<String> seenDeletionIds = new LinkedHashSet<>();
+                    for (PresentationElement candidate : deletionOrder) {
+                        if (!seenDeletionIds.add(candidate.getID())) {
+                            continue;
+                        }
+                        String candidateParentId = candidate == descendant
+                                ? parentId
+                                : subtreeParents.get(candidate.getID());
+                        JsonObject decoration = describePresentationElement(candidate, candidateParentId);
+                        try {
+                            if (dryRun) {
+                                decoration.addProperty("status", "preview");
+                                decoration.addProperty("applied", false);
+                                decoration.addProperty("deleted", false);
+                            } else {
+                                pem.deletePresentationElement(candidate);
+                                decoration.addProperty("status", "deleted");
+                                decoration.addProperty("applied", true);
+                                decoration.addProperty("deleted", true);
+                                deletedForTarget++;
+                                deletedDecorationCount++;
+                            }
+                        } catch (Exception e) {
+                            decoration.addProperty("status", "error");
+                            decoration.addProperty("applied", false);
+                            decoration.addProperty("deleted", false);
+                            decoration.addProperty("error", safeMessage(e));
+                            errorsForTarget++;
+                        }
+                        decorations.add(decoration);
+                    }
+                }
+
+                boolean updated = dryRun ? decorations.size() > 0 : deletedForTarget > 0;
+                String status;
+                if (decorations.size() == 0) {
+                    status = "noop";
+                } else if (dryRun) {
+                    status = "preview";
+                } else if (errorsForTarget > 0 && deletedForTarget > 0) {
+                    status = "partial";
+                } else if (errorsForTarget > 0) {
+                    status = "error";
+                } else {
+                    status = "applied";
+                }
+
+                entry.addProperty("matchedDecorationCount", matchedIds.size());
+                entry.addProperty("targetDecorationCount", decorations.size());
+                entry.addProperty("deletedCount", deletedForTarget);
+                entry.addProperty("updated", updated);
+                entry.addProperty("applied", !dryRun && updated);
+                entry.addProperty("status", status);
+                if (errorsForTarget > 0) {
+                    entry.addProperty("error", errorsForTarget + " path decoration(s) failed to prune");
+                }
+                entry.add("decorations", decorations);
+                entry.add("receipt", buildRepairReceipt(
+                        "prunePathDecorations",
+                        diagramId,
+                        diagramType,
+                        target.getID(),
+                        !dryRun && updated,
+                        false,
+                        entry));
+                results.add(entry);
+            }
+
+            JsonObject response = new JsonObject();
+            response.addProperty("diagramId", diagramId);
+            response.addProperty("diagramType", diagramType);
+            response.addProperty("dryRun", dryRun);
+            JsonArray dropTypes = new JsonArray();
+            for (String shapeType : effectiveDropShapeTypes) {
+                dropTypes.add(shapeType);
+            }
+            response.add("dropChildShapeTypes", dropTypes);
+            response.addProperty("resultCount", results.size());
+            response.addProperty("updatedCount", countUpdatedTargets(results));
+            response.addProperty("deletedDecorationCount", deletedDecorationCount);
+            response.add("results", results);
+            response.add("receipt", buildBatchRepairReceipt(
+                    "prunePathDecorations",
+                    diagramId,
+                    diagramType,
+                    dryRun,
+                    selection.totalRequestedCount(),
+                    countUpdatedTargets(results),
+                    results.size(),
+                    countErrorTargets(results)));
+            return response;
+        });
+
+        HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
     private void handleRepairHiddenLabels(HttpExchange exchange, String diagramId) throws Exception {
         JsonObject body = JsonHelper.parseBody(exchange);
         List<String> presentationIds = JsonHelper.optionalStringList(body, "presentationIds");
@@ -1450,6 +1828,108 @@ public class DiagramHandler implements HttpHandler {
                     dryRun,
                     selection.totalRequestedCount(),
                     countUpdatedTargets(results),
+                    results.size(),
+                    countErrorTargets(results)));
+            return response;
+        });
+
+        HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
+    private void handlePrunePresentations(HttpExchange exchange, String diagramId) throws Exception {
+        JsonObject body = JsonHelper.parseBody(exchange);
+        List<String> keepElementIds = JsonHelper.optionalStringList(body, "keepElementIds");
+        List<String> dropElementTypes = JsonHelper.optionalStringList(body, "dropElementTypes");
+        List<String> dropShapeTypes = JsonHelper.optionalStringList(body, "dropShapeTypes");
+        List<String> excludeElementIds = JsonHelper.optionalStringList(body, "excludeElementIds");
+        List<String> excludePresentationIds = JsonHelper.optionalStringList(body, "excludePresentationIds");
+        boolean dryRun = readBoolean(body, "dryRun", false);
+
+        boolean hasRules = (keepElementIds != null && !keepElementIds.isEmpty())
+                || (dropElementTypes != null && !dropElementTypes.isEmpty())
+                || (dropShapeTypes != null && !dropShapeTypes.isEmpty())
+                || (excludeElementIds != null && !excludeElementIds.isEmpty())
+                || (excludePresentationIds != null && !excludePresentationIds.isEmpty());
+        if (!hasRules) {
+            HttpBridgeServer.sendError(exchange, 400, "MISSING_PARAM",
+                    "Request body must include at least one prune rule");
+            return;
+        }
+
+        JsonObject result = EdtDispatcher.write("MCP Bridge: Prune Diagram Presentations", project -> {
+            DiagramPresentationElement dpe = findDiagramById(project, diagramId);
+            dpe.ensureLoaded();
+
+            List<PresentationElement> flattened = new ArrayList<>();
+            Map<String, String> parentById = new LinkedHashMap<>();
+            collectPresentationElements(dpe.getPresentationElements(), flattened, parentById, null);
+
+            PresentationPruneRules rules = new PresentationPruneRules(
+                    keepElementIds != null ? new LinkedHashSet<>(keepElementIds) : Collections.emptySet(),
+                    dropElementTypes != null ? new ArrayList<>(dropElementTypes) : Collections.emptyList(),
+                    dropShapeTypes != null ? new ArrayList<>(dropShapeTypes) : Collections.emptyList(),
+                    excludeElementIds != null ? new LinkedHashSet<>(excludeElementIds) : Collections.emptySet(),
+                    excludePresentationIds != null ? new LinkedHashSet<>(excludePresentationIds) : Collections.emptySet());
+
+            LinkedHashSet<String> matchedIds = new LinkedHashSet<>();
+            for (PresentationElement target : flattened) {
+                if (shouldPrunePresentation(target, rules)) {
+                    matchedIds.add(target.getID());
+                }
+            }
+
+            PresentationElementsManager pem = PresentationElementsManager.getInstance();
+            JsonArray results = new JsonArray();
+            int deletedCount = 0;
+            for (PresentationElement target : flattened) {
+                String presentationId = target.getID();
+                if (!matchedIds.contains(presentationId)) {
+                    continue;
+                }
+
+                String parentId = parentById.get(presentationId);
+                if (parentId != null && matchedIds.contains(parentId)) {
+                    continue;
+                }
+
+                JsonObject entry = describePresentationElement(target, parentId);
+                try {
+                    if (dryRun) {
+                        entry.addProperty("status", "preview");
+                        entry.addProperty("applied", false);
+                        entry.addProperty("deleted", false);
+                    } else {
+                        pem.deletePresentationElement(target);
+                        entry.addProperty("status", "deleted");
+                        entry.addProperty("applied", true);
+                        entry.addProperty("deleted", true);
+                        deletedCount++;
+                    }
+                } catch (Exception e) {
+                    entry.addProperty("status", "error");
+                    entry.addProperty("applied", false);
+                    entry.addProperty("deleted", false);
+                    entry.addProperty("error", safeMessage(e));
+                }
+                results.add(entry);
+            }
+
+            String diagramType = diagramTypeName(dpe);
+            JsonObject response = new JsonObject();
+            response.addProperty("diagramId", diagramId);
+            response.addProperty("diagramType", diagramType);
+            response.addProperty("dryRun", dryRun);
+            response.addProperty("matchedCount", matchedIds.size());
+            response.addProperty("targetCount", results.size());
+            response.addProperty("deletedCount", deletedCount);
+            response.add("results", results);
+            response.add("receipt", buildBatchRepairReceipt(
+                    "prunePresentations",
+                    diagramId,
+                    diagramType,
+                    dryRun,
+                    matchedIds.size(),
+                    deletedCount,
                     results.size(),
                     countErrorTargets(results)));
             return response;
@@ -1761,12 +2241,23 @@ public class DiagramHandler implements HttpHandler {
     private void collectPresentationElements(
             List<PresentationElement> elements,
             List<PresentationElement> sink) {
+        collectPresentationElements(elements, sink, null, null);
+    }
+
+    private void collectPresentationElements(
+            List<PresentationElement> elements,
+            List<PresentationElement> sink,
+            Map<String, String> parentById,
+            String parentPresentationId) {
         if (elements == null) {
             return;
         }
         for (PresentationElement pe : elements) {
             sink.add(pe);
-            collectPresentationElements(pe.getPresentationElements(), sink);
+            if (parentById != null && parentPresentationId != null) {
+                parentById.put(pe.getID(), parentPresentationId);
+            }
+            collectPresentationElements(pe.getPresentationElements(), sink, parentById, pe.getID());
         }
     }
 
@@ -1911,17 +2402,20 @@ public class DiagramHandler implements HttpHandler {
             case "showdirection":
                 return new PropertySelection(value, List.of(), List.of("showdirection", "direction"));
             case "showproperties":
-                return new PropertySelection(value, List.of("Show Properties"), List.of("showproperties"));
+                return new PropertySelection(value, List.of("Show Properties", "Suppress Properties"),
+                        List.of("showproperties", "suppressproperties"));
             case "showoperations":
                 return new PropertySelection(value, List.of("Show Operations", "Suppress Operations"),
                         List.of("showoperations", "suppressoperations"));
             case "showconstraints":
-                return new PropertySelection(value, List.of("Show Constraints"), List.of("showconstraints"));
+                return new PropertySelection(value, List.of("Show Constraints", "Suppress Constraints"),
+                        List.of("showconstraints", "suppressconstraints"));
             case "showtaggedvalues":
                 return new PropertySelection(value, List.of("Show Tagged Values"),
                         List.of("showtaggedvalues"));
             case "showports":
-                return new PropertySelection(value, List.of("Show Ports"), List.of("showports"));
+                return new PropertySelection(value, List.of("Show Ports", "Suppress Ports"),
+                        List.of("showports", "suppressports"));
             case "showattributes":
                 return new PropertySelection(value, List.of("Suppress Attributes"), List.of("suppressattributes"));
             case "showelementproperties":
@@ -1930,6 +2424,33 @@ public class DiagramHandler implements HttpHandler {
             case "showfullports":
                 return new PropertySelection(value, List.of("Show Full Ports", "Suppress Full Ports"),
                         List.of("showfullports", "suppressfullports"));
+            case "showparts":
+                return new PropertySelection(value, List.of("Show Parts", "Suppress Parts"),
+                        List.of("showparts", "suppressparts"));
+            case "showcontent":
+                return new PropertySelection(value, List.of("Show Content", "Suppress Content"),
+                        List.of("showcontent", "suppresscontent"));
+            case "showreferences":
+                return new PropertySelection(value, List.of("Show References", "Suppress References"),
+                        List.of("showreferences", "suppressreferences"));
+            case "showvalues":
+                return new PropertySelection(value, List.of("Show Values", "Suppress Values"),
+                        List.of("showvalues", "suppressvalues"));
+            case "showflowproperties":
+                return new PropertySelection(value, List.of("Show Flow Properties", "Suppress Flow Properties"),
+                        List.of("showflowproperties", "suppressflowproperties"));
+            case "showproxyports":
+                return new PropertySelection(value, List.of("Show Proxy Ports", "Suppress Proxy Ports"),
+                        List.of("showproxyports", "suppressproxyports"));
+            case "showbehaviors":
+                return new PropertySelection(value, List.of("Show Behaviors", "Suppress Behaviors"),
+                        List.of("showbehaviors", "suppressbehaviors"));
+            case "showreceptions":
+                return new PropertySelection(value, List.of("Show Receptions", "Suppress Receptions"),
+                        List.of("showreceptions", "suppressreceptions"));
+            case "showstructure":
+                return new PropertySelection(value, List.of("Show Structure", "Suppress Structure"),
+                        List.of("showstructure", "suppressstructure"));
             case "showallocatedelements":
                 return new PropertySelection(value, List.of(), List.of("allocatedelements", "allocatedfrom"));
             case "applyallocationnaming":
@@ -2203,6 +2724,47 @@ public class DiagramHandler implements HttpHandler {
         return value == null ? "" : value.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
     }
 
+    private boolean shouldPrunePresentation(
+            PresentationElement pe,
+            PresentationPruneRules rules) {
+        if (pe == null || rules == null) {
+            return false;
+        }
+
+        String presentationId = pe.getID();
+        if (presentationId == null || rules.excludePresentationIds.contains(presentationId)) {
+            return false;
+        }
+
+        Element element = null;
+        try {
+            element = pe.getElement();
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not inspect presentation element for pruning", e);
+        }
+
+        if (element instanceof Diagram) {
+            return false;
+        }
+
+        String elementId = element != null ? element.getID() : null;
+        if (elementId != null && rules.excludeElementIds.contains(elementId)) {
+            return false;
+        }
+
+        boolean matched = false;
+        if (!rules.keepElementIds.isEmpty() && elementId != null && !rules.keepElementIds.contains(elementId)) {
+            matched = true;
+        }
+        if (!rules.dropElementTypes.isEmpty() && matchesAnyPresentationToken(pe, rules.dropElementTypes)) {
+            matched = true;
+        }
+        if (!rules.dropShapeTypes.isEmpty() && matchesAnyShapeTypeToken(pe, rules.dropShapeTypes)) {
+            matched = true;
+        }
+        return matched;
+    }
+
     private boolean presentationElementMatches(PresentationElement pe, String token) {
         if (pe == null) {
             return false;
@@ -2224,6 +2786,31 @@ public class DiagramHandler implements HttpHandler {
         String runtimeType = normalizePropertyKey(
                 classType != null ? classType.toString() : "");
         return runtimeType.contains(normalizedToken);
+    }
+
+    private boolean matchesAnyPresentationToken(PresentationElement pe, List<String> tokens) {
+        if (tokens == null) {
+            return false;
+        }
+        for (String token : tokens) {
+            if (presentationElementMatches(pe, token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesAnyShapeTypeToken(PresentationElement pe, List<String> tokens) {
+        if (pe == null || tokens == null) {
+            return false;
+        }
+        String shapeType = normalizePropertyKey(pe.getClass().getSimpleName());
+        for (String token : tokens) {
+            if (shapeType.contains(normalizePropertyKey(token))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean readBoolean(JsonObject body, String key, boolean defaultValue) {
@@ -2251,6 +2838,39 @@ public class DiagramHandler implements HttpHandler {
             }
         }
         return null;
+    }
+
+    private static final class DiagramAddResult {
+        private final ShapeElement shape;
+        private final String status;
+        private final boolean activityPartitionNative;
+
+        private DiagramAddResult(ShapeElement shape, String status, boolean activityPartitionNative) {
+            this.shape = shape;
+            this.status = status;
+            this.activityPartitionNative = activityPartitionNative;
+        }
+    }
+
+    private static final class PresentationPruneRules {
+        private final Set<String> keepElementIds;
+        private final List<String> dropElementTypes;
+        private final List<String> dropShapeTypes;
+        private final Set<String> excludeElementIds;
+        private final Set<String> excludePresentationIds;
+
+        private PresentationPruneRules(
+                Set<String> keepElementIds,
+                List<String> dropElementTypes,
+                List<String> dropShapeTypes,
+                Set<String> excludeElementIds,
+                Set<String> excludePresentationIds) {
+            this.keepElementIds = keepElementIds;
+            this.dropElementTypes = dropElementTypes;
+            this.dropShapeTypes = dropShapeTypes;
+            this.excludeElementIds = excludeElementIds;
+            this.excludePresentationIds = excludePresentationIds;
+        }
     }
 
     private void addJsonValue(JsonObject target, String key, Object value) {
@@ -2296,7 +2916,7 @@ public class DiagramHandler implements HttpHandler {
         }
     }
 
-    private String normalizePropertyKey(String value) {
+    private static String normalizePropertyKey(String value) {
         return value == null ? "" : value.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
     }
 
@@ -2308,22 +2928,7 @@ public class DiagramHandler implements HttpHandler {
             }
         }
 
-        Map<String, String[]> aliases = new LinkedHashMap<>();
-        aliases.put("properties", new String[]{"Show Properties"});
-        aliases.put("operations", new String[]{"Show Operations", "Suppress Operations"});
-        aliases.put("constraints", new String[]{"Show Constraints"});
-        aliases.put("taggedvalues", new String[]{"Show Tagged Values"});
-        aliases.put("ports", new String[]{"Show Ports"});
-        aliases.put("attributes", new String[]{"Suppress Attributes"});
-        aliases.put("stereotype", new String[]{"Show Stereotype"});
-        aliases.put("name", new String[]{"Show Name"});
-        aliases.put("type", new String[]{"Show Type"});
-
-        String[] candidates = aliases.get(normalized);
-        if (candidates == null) {
-            return null;
-        }
-        for (String candidate : candidates) {
+        for (String candidate : CompartmentAliasResolver.candidatePropertyNames(requestedKey)) {
             Property property = propertyByName.get(candidate);
             if (property != null) {
                 return property;
@@ -2333,14 +2938,8 @@ public class DiagramHandler implements HttpHandler {
     }
 
     private void applyCompartmentValue(Property property, JsonElement value, String requestedKey) {
-        String propertyName = property.getName();
-        boolean boolValue = value.getAsBoolean();
-        if ("Suppress Attributes".equals(propertyName) || "Suppress Operations".equals(propertyName)) {
-            property.setValue(!boolValue);
-            return;
-        }
         if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean()) {
-            property.setValue(boolValue);
+            setBooleanLikeProperty(property, value.getAsBoolean());
         } else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
             property.setValue(value.getAsInt());
         } else {
@@ -2371,6 +2970,51 @@ public class DiagramHandler implements HttpHandler {
             }
         }
         return points;
+    }
+
+    private JsonObject describePresentationElement(PresentationElement pe, String parentPeId) {
+        JsonObject shapeJson = new JsonObject();
+        shapeJson.addProperty("presentationId", pe.getID());
+        shapeJson.addProperty("shapeType", pe.getClass().getSimpleName());
+
+        if (parentPeId != null) {
+            shapeJson.addProperty("parentPresentationId", parentPeId);
+        }
+
+        try {
+            Element modelElement = pe.getElement();
+            if (modelElement != null) {
+                shapeJson.addProperty("elementId", modelElement.getID());
+                if (modelElement instanceof NamedElement) {
+                    shapeJson.addProperty("elementName",
+                            ((NamedElement) modelElement).getName());
+                }
+                shapeJson.addProperty("elementType", modelElement.getHumanType());
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not inspect backing element for presentation", e);
+        }
+
+        try {
+            Rectangle bounds = pe.getBounds();
+            if (bounds != null) {
+                JsonObject boundsJson = new JsonObject();
+                boundsJson.addProperty("x", bounds.x);
+                boundsJson.addProperty("y", bounds.y);
+                boundsJson.addProperty("width", bounds.width);
+                boundsJson.addProperty("height", bounds.height);
+                shapeJson.add("bounds", boundsJson);
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not inspect presentation bounds", e);
+        }
+
+        List<PresentationElement> children = pe.getPresentationElements();
+        int childCount = (children != null) ? children.size() : 0;
+        if (childCount > 0) {
+            shapeJson.addProperty("childCount", childCount);
+        }
+        return shapeJson;
     }
 
     // ── Utility Methods ─────────────────────────────────────────────────────
@@ -2459,7 +3103,7 @@ public class DiagramHandler implements HttpHandler {
             case "requirement diagram":
             case "requirements":
             case "sysml requirement diagram":
-                return "SysML Requirement Diagram";
+                return "Requirement Diagram";
             case "parametric":
             case "parametric diagram":
             case "sysml parametric diagram":

@@ -22,6 +22,8 @@ from cameo_mcp.server import (
     cameo_list_matrix_kinds,
     cameo_list_methodology_packs,
     cameo_normalize_compartment_presets,
+    cameo_prune_diagram_presentations,
+    cameo_prune_path_decorations,
     cameo_proof_model_text,
     cameo_repair_conveyed_item_labels,
     cameo_repair_hidden_labels,
@@ -103,7 +105,7 @@ class ToolSchemaAliasTests(unittest.TestCase):
 
 class ServerToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_cameo_get_capabilities_returns_native_dict(self) -> None:
-        payload = {"pluginVersion": "2.3.3", "compatibility": {"clientCompatible": True}}
+        payload = {"pluginVersion": "2.3.4", "compatibility": {"clientCompatible": True}}
 
         with patch(
             "cameo_mcp.server.client.get_capabilities",
@@ -466,6 +468,56 @@ class ServerToolTests(unittest.IsolatedAsyncioTestCase):
         normalize_compartment_presets.assert_awaited_once_with(
             "dia-1",
             presentation_ids=["pe-1"],
+            dry_run=True,
+        )
+
+    async def test_cameo_prune_diagram_presentations_wraps_client(self) -> None:
+        payload = {"deletedCount": 2}
+
+        with patch(
+            "cameo_mcp.server.client.prune_diagram_presentations",
+            new=AsyncMock(return_value=payload),
+        ) as prune_diagram_presentations:
+            result = await cameo_prune_diagram_presentations(
+                "dia-1",
+                keep_element_ids=["el-1"],
+                drop_element_types=["Item Flow"],
+                drop_shape_types=["ConnectorEndView"],
+                exclude_element_ids=["el-safe"],
+                exclude_presentation_ids=["pe-safe"],
+                dry_run=True,
+            )
+
+        self.assertIs(result, payload)
+        prune_diagram_presentations.assert_awaited_once_with(
+            "dia-1",
+            keep_element_ids=["el-1"],
+            drop_element_types=["Item Flow"],
+            drop_shape_types=["ConnectorEndView"],
+            exclude_element_ids=["el-safe"],
+            exclude_presentation_ids=["pe-safe"],
+            dry_run=True,
+        )
+
+    async def test_cameo_prune_path_decorations_wraps_client(self) -> None:
+        payload = {"deletedDecorationCount": 2}
+
+        with patch(
+            "cameo_mcp.server.client.prune_path_decorations",
+            new=AsyncMock(return_value=payload),
+        ) as prune_path_decorations:
+            result = await cameo_prune_path_decorations(
+                "dia-1",
+                presentation_ids=["pe-1"],
+                drop_child_shape_types=["RoleView"],
+                dry_run=True,
+            )
+
+        self.assertIs(result, payload)
+        prune_path_decorations.assert_awaited_once_with(
+            "dia-1",
+            presentation_ids=["pe-1"],
+            drop_child_shape_types=["RoleView"],
             dry_run=True,
         )
 
