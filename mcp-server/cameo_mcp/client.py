@@ -12,7 +12,7 @@ from typing import Any, Optional
 import httpx
 from PIL import Image
 
-BRIDGE_PLUGIN_VERSION = "2.3.4"
+BRIDGE_PLUGIN_VERSION = "2.3.5"
 BRIDGE_API_VERSION = "v1"
 BRIDGE_HANDSHAKE_VERSION = "1"
 
@@ -36,6 +36,8 @@ VALIDATED_DIAGRAM_TYPES: list[dict[str, Any]] = [
     {"canonical": "IBD", "nativeType": "SysML Internal Block Diagram", "family": "sysml", "aliases": ["ibd", "InternalBlockDiagram", "Internal Block Diagram", "SysML IBD", "SysML Internal Block Diagram"]},
     {"canonical": "Requirement Diagram", "nativeType": "SysML Requirement Diagram", "family": "sysml", "aliases": ["requirement", "requirements", "RequirementDiagram", "Requirement Diagram", "SysML Requirement Diagram"]},
     {"canonical": "Parametric Diagram", "nativeType": "SysML Parametric Diagram", "family": "sysml", "aliases": ["parametric", "ParametricDiagram", "Parametric Diagram", "SysML Parametric Diagram"]},
+    {"canonical": "RelationMap", "nativeType": "Relation Map Diagram", "family": "analysis", "aliases": ["relation map", "relationship map", "RelationMap", "Relation Map", "Relation Map Diagram", "Relationship Map", "Relationship Map Diagram"]},
+    {"canonical": "Content Diagram", "nativeType": "Content Diagram", "family": "analysis", "aliases": ["content", "content diagram", "ContentDiagram", "Content Diagram"]},
 ]
 
 VALIDATED_MATRIX_KINDS: list[dict[str, Any]] = [
@@ -66,6 +68,13 @@ VALIDATED_MATRIX_KINDS: list[dict[str, Any]] = [
         "aliases": ["allocation", "allocation matrix", "system allocation matrix", "sysml allocation matrix"],
         "validatedRowTypeExamples": ["Block", "Property", "UseCase"],
         "validatedColumnTypeExamples": ["Block", "Property", "Component"],
+    },
+    {
+        "kind": "dependency",
+        "nativeType": "Dependency Matrix",
+        "aliases": ["dependency", "dependency matrix"],
+        "validatedRowTypeExamples": ["Activity", "OpaqueAction", "Block", "Requirement"],
+        "validatedColumnTypeExamples": ["Activity", "OpaqueAction", "Block", "Requirement"],
     },
 ]
 
@@ -323,6 +332,7 @@ async def _request_raw(
     *,
     params: Optional[dict[str, Any]] = None,
     json_body: Optional[dict[str, Any]] = None,
+    timeout: Optional[float] = None,
 ) -> dict[str, Any]:
     """Send an HTTP request to the Java plugin and return the JSON response.
 
@@ -335,6 +345,7 @@ async def _request_raw(
             path,
             params=params,
             json=json_body,
+            timeout=timeout,
         )
         response.raise_for_status()
         if response.status_code == 204 or not response.content:
@@ -346,6 +357,13 @@ async def _request_raw(
             f"{_base_url()}. "
             "Ensure CATIA Magic (Cameo Systems Modeler) is running "
             "and the CameoMCPBridge plugin is loaded."
+        ) from None
+    except httpx.TimeoutException:
+        timeout_label = f"{timeout:g}s" if timeout is not None else "the configured timeout"
+        raise TimeoutError(
+            f"CameoMCPBridge request timed out after {timeout_label}: {method} {path}. "
+            "Long-running CATIA operations such as diagram image export may need a higher timeout "
+            "or a no-image validation pass."
         ) from None
     except httpx.HTTPStatusError as exc:
         try:
@@ -380,10 +398,11 @@ async def _request(
     *,
     params: Optional[dict[str, Any]] = None,
     json_body: Optional[dict[str, Any]] = None,
+    timeout: Optional[float] = None,
 ) -> dict[str, Any]:
     if path not in {"/status", "/capabilities"}:
         await _ensure_compatible_bridge()
-    return await _request_raw(method, path, params=params, json_body=json_body)
+    return await _request_raw(method, path, params=params, json_body=json_body, timeout=timeout)
 
 # -- Status / Project --------------------------------------------------------
 
@@ -396,6 +415,21 @@ async def status() -> dict[str, Any]:
 async def get_capabilities() -> dict[str, Any]:
     """Get plugin capability and compatibility metadata."""
     return _annotate_bridge_metadata(await _request_raw("GET", "/capabilities"))
+
+
+async def get_ui_state(summary_only: bool = False) -> dict[str, Any]:
+    """Get active project, active diagram, browser selection, and symbol selection."""
+    return await _request("GET", "/ui/state", params={"summaryOnly": summary_only})
+
+
+async def get_active_diagram() -> dict[str, Any]:
+    """Get the currently active diagram in the CATIA Magic UI."""
+    return await _request("GET", "/ui/active-diagram")
+
+
+async def get_ui_selection() -> dict[str, Any]:
+    """Get current selected browser elements and diagram presentation elements."""
+    return await _request("GET", "/ui/selection")
 
 
 async def probe_bridge() -> dict[str, Any]:
@@ -747,6 +781,1095 @@ async def create_matrix(
         body["columnTypes"] = column_types
     return await _request("POST", "/matrices", json_body=body)
 
+# -- Generic Tables -----------------------------------------------------------
+
+
+async def list_generic_tables() -> dict[str, Any]:
+    """List native Generic Table artifacts in the current project."""
+    return await _request("GET", "/generic-tables")
+
+
+async def get_generic_table(table_id: str) -> dict[str, Any]:
+    """Get one native Generic Table with row, column, and cell data."""
+    return await _request("GET", f"/generic-tables/{table_id}")
+
+
+async def list_generic_table_columns(
+    element_id: Optional[str] = None,
+    element_type: Optional[str] = None,
+) -> dict[str, Any]:
+    """List possible native Generic Table column ids for an element or type."""
+    params: dict[str, Any] = {}
+    if element_id is not None:
+        params["elementId"] = element_id
+    if element_type is not None:
+        params["elementType"] = element_type
+    return await _request("GET", "/generic-tables/columns", params=params)
+
+
+async def create_generic_table(
+    parent_id: str,
+    name: Optional[str] = None,
+    element_types: Optional[list[str]] = None,
+    scope_ids: Optional[list[str]] = None,
+    row_element_ids: Optional[list[str]] = None,
+    column_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Create and configure a native Generic Table artifact."""
+    body: dict[str, Any] = {"parentId": parent_id}
+    if name is not None:
+        body["name"] = name
+    if element_types is not None:
+        body["elementTypes"] = element_types
+    if scope_ids is not None:
+        body["scopeIds"] = scope_ids
+    if row_element_ids is not None:
+        body["rowElementIds"] = row_element_ids
+    if column_ids is not None:
+        body["columnIds"] = column_ids
+    return await _request("POST", "/generic-tables", json_body=body)
+
+# -- Relation Maps ------------------------------------------------------------
+
+
+async def list_relation_maps() -> dict[str, Any]:
+    """List native Relation Map artifacts in the current project."""
+    return await _request("GET", "/relation-maps")
+
+
+async def get_relation_map(relation_map_id: str) -> dict[str, Any]:
+    """Get one native Relation Map with persisted graph settings."""
+    return await _request("GET", f"/relation-maps/{relation_map_id}")
+
+
+def _relation_map_settings_body(
+    *,
+    context_element_id: Optional[str] = None,
+    scope_ids: Optional[list[str]] = None,
+    element_type_ids: Optional[list[str]] = None,
+    dependency_criteria: Optional[list[str]] = None,
+    depth: Optional[int] = None,
+    layout: Optional[str] = None,
+    legend_enabled: Optional[bool] = None,
+    show_full_types: Optional[bool] = None,
+    show_stereotypes: Optional[bool] = None,
+    show_parameters: Optional[bool] = None,
+    show_element_numbers: Optional[bool] = None,
+    single_node_per_element: Optional[bool] = None,
+    short_node_names: Optional[bool] = None,
+    types_include_subtypes: Optional[bool] = None,
+    types_include_custom_types: Optional[bool] = None,
+    make_element_as_context: Optional[bool] = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    if context_element_id is not None:
+        body["contextElementId"] = context_element_id
+    if scope_ids is not None:
+        body["scopeIds"] = scope_ids
+    if element_type_ids is not None:
+        body["elementTypeIds"] = element_type_ids
+    if dependency_criteria is not None:
+        body["dependencyCriteria"] = dependency_criteria
+    if depth is not None:
+        body["depth"] = depth
+    if layout is not None:
+        body["layout"] = layout
+    optional_flags = {
+        "legendEnabled": legend_enabled,
+        "showFullTypes": show_full_types,
+        "showStereotypes": show_stereotypes,
+        "showParameters": show_parameters,
+        "showElementNumbers": show_element_numbers,
+        "singleNodePerElement": single_node_per_element,
+        "shortNodeNames": short_node_names,
+        "typesIncludeSubtypes": types_include_subtypes,
+        "typesIncludeCustomTypes": types_include_custom_types,
+        "makeElementAsContext": make_element_as_context,
+    }
+    body.update({key: value for key, value in optional_flags.items() if value is not None})
+    return body
+
+
+async def create_relation_map(
+    parent_id: str,
+    name: Optional[str] = None,
+    context_element_id: Optional[str] = None,
+    scope_ids: Optional[list[str]] = None,
+    element_type_ids: Optional[list[str]] = None,
+    dependency_criteria: Optional[list[str]] = None,
+    depth: Optional[int] = None,
+    layout: Optional[str] = None,
+    legend_enabled: Optional[bool] = None,
+    show_full_types: Optional[bool] = None,
+    show_stereotypes: Optional[bool] = None,
+    show_parameters: Optional[bool] = None,
+    show_element_numbers: Optional[bool] = None,
+    single_node_per_element: Optional[bool] = None,
+    short_node_names: Optional[bool] = None,
+    types_include_subtypes: Optional[bool] = None,
+    types_include_custom_types: Optional[bool] = None,
+    make_element_as_context: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Create and configure a native Relation Map artifact."""
+    body = {"parentId": parent_id}
+    if name is not None:
+        body["name"] = name
+    body.update(
+        _relation_map_settings_body(
+            context_element_id=context_element_id,
+            scope_ids=scope_ids,
+            element_type_ids=element_type_ids,
+            dependency_criteria=dependency_criteria,
+            depth=depth,
+            layout=layout,
+            legend_enabled=legend_enabled,
+            show_full_types=show_full_types,
+            show_stereotypes=show_stereotypes,
+            show_parameters=show_parameters,
+            show_element_numbers=show_element_numbers,
+            single_node_per_element=single_node_per_element,
+            short_node_names=short_node_names,
+            types_include_subtypes=types_include_subtypes,
+            types_include_custom_types=types_include_custom_types,
+            make_element_as_context=make_element_as_context,
+        )
+    )
+    return await _request("POST", "/relation-maps", json_body=body)
+
+
+async def configure_relation_map(
+    relation_map_id: str,
+    context_element_id: Optional[str] = None,
+    scope_ids: Optional[list[str]] = None,
+    element_type_ids: Optional[list[str]] = None,
+    dependency_criteria: Optional[list[str]] = None,
+    depth: Optional[int] = None,
+    layout: Optional[str] = None,
+    legend_enabled: Optional[bool] = None,
+    show_full_types: Optional[bool] = None,
+    show_stereotypes: Optional[bool] = None,
+    show_parameters: Optional[bool] = None,
+    show_element_numbers: Optional[bool] = None,
+    single_node_per_element: Optional[bool] = None,
+    short_node_names: Optional[bool] = None,
+    types_include_subtypes: Optional[bool] = None,
+    types_include_custom_types: Optional[bool] = None,
+    make_element_as_context: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Update persisted settings for a native Relation Map artifact."""
+    body = _relation_map_settings_body(
+        context_element_id=context_element_id,
+        scope_ids=scope_ids,
+        element_type_ids=element_type_ids,
+        dependency_criteria=dependency_criteria,
+        depth=depth,
+        layout=layout,
+        legend_enabled=legend_enabled,
+        show_full_types=show_full_types,
+        show_stereotypes=show_stereotypes,
+        show_parameters=show_parameters,
+        show_element_numbers=show_element_numbers,
+        single_node_per_element=single_node_per_element,
+        short_node_names=short_node_names,
+        types_include_subtypes=types_include_subtypes,
+        types_include_custom_types=types_include_custom_types,
+        make_element_as_context=make_element_as_context,
+    )
+    return await _request(
+        "PUT",
+        f"/relation-maps/{relation_map_id}/settings",
+        json_body=body,
+    )
+
+
+async def refresh_relation_map(relation_map_id: str, timeout: float = 120.0) -> dict[str, Any]:
+    """Refresh a native Relation Map after model or settings changes.
+
+    Native CATIA refresh can block for large maps, so callers should invoke it
+    deliberately and expect a long-running write operation.
+    """
+    return await _request(
+        "POST",
+        f"/relation-maps/{relation_map_id}/refresh",
+        json_body={"refreshTimeoutSeconds": max(1, int(timeout))},
+        timeout=timeout,
+    )
+
+
+async def get_relation_map_raw_settings(
+    relation_map_id: str,
+    include_raw: bool = False,
+    summary_only: bool = False,
+) -> dict[str, Any]:
+    """Dump native GraphSettings fields and reflected no-arg getter values."""
+    return await _request(
+        "GET",
+        f"/relation-maps/{relation_map_id}/settings/raw",
+        params={"includeRaw": include_raw, "summaryOnly": summary_only},
+    )
+
+
+async def get_relation_map_presentations(
+    relation_map_id: str,
+    include_properties: bool = False,
+    include_raw: bool = False,
+    summary_only: bool = True,
+    limit: int = 250,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List loaded Relation Map presentation elements, including nodes, paths, and legend symbols."""
+    return await _request(
+        "GET",
+        f"/relation-maps/{relation_map_id}/presentations",
+        params={
+            "includeProperties": include_properties,
+            "includeRaw": include_raw,
+            "summaryOnly": summary_only,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+async def list_relation_map_criteria_templates() -> dict[str, Any]:
+    """List built-in Relation Map criteria templates."""
+    return await _request("GET", "/relation-maps/criteria/templates")
+
+
+async def set_relation_map_criteria(
+    relation_map_id: str,
+    mode: str = "replace",
+    criteria: Optional[list[dict[str, Any] | str]] = None,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Apply native Relation Map dependency criteria."""
+    return await _request(
+        "PUT",
+        f"/relation-maps/{relation_map_id}/criteria",
+        json_body={"mode": mode, "criteria": criteria or [], "refresh": refresh},
+    )
+
+
+async def expand_relation_map(
+    relation_map_id: str,
+    mode: str = "all",
+    element_ids: Optional[list[str]] = None,
+    depth: Optional[int] = None,
+    refresh: bool = False,
+    layout: Optional[str] = None,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Try to expand native Relation Map graph nodes."""
+    body: dict[str, Any] = {"mode": mode, "refresh": refresh}
+    if element_ids is not None:
+        body["elementIds"] = element_ids
+    if depth is not None:
+        body["depth"] = depth
+    if layout is not None:
+        body["layout"] = layout
+    body["actionTimeoutSeconds"] = max(1, int(timeout))
+    return await _request("POST", f"/relation-maps/{relation_map_id}/expand", json_body=body, timeout=timeout)
+
+
+async def collapse_relation_map(
+    relation_map_id: str,
+    mode: str = "all",
+    element_ids: Optional[list[str]] = None,
+    refresh: bool = False,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Try to collapse native Relation Map graph nodes."""
+    body: dict[str, Any] = {"mode": mode, "refresh": refresh}
+    if element_ids is not None:
+        body["elementIds"] = element_ids
+    body["actionTimeoutSeconds"] = max(1, int(timeout))
+    return await _request("POST", f"/relation-maps/{relation_map_id}/collapse", json_body=body, timeout=timeout)
+
+
+async def render_relation_map(
+    relation_map_id: str,
+    refresh: bool = False,
+    expand: str = "none",
+    depth: Optional[int] = None,
+    layout: Optional[str] = None,
+    scale_percentage: int = 200,
+    include_image: bool = True,
+    include_presentation_summary: bool = True,
+    export_image: Optional[bool] = None,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Run the Relation Map render/export pipeline.
+
+    Native Relation Map refresh can block CATIA for large maps, so it is opt-in.
+    """
+    body: dict[str, Any] = {
+        "refresh": refresh,
+        "expand": expand,
+        "scalePercentage": scale_percentage,
+        "includeImage": include_image,
+        "includePresentationSummary": include_presentation_summary,
+    }
+    if depth is not None:
+        body["depth"] = depth
+    if layout is not None:
+        body["layout"] = layout
+    if export_image is not None:
+        body["exportImage"] = export_image
+    body["renderTimeoutSeconds"] = max(1, int(timeout))
+    return await _request("POST", f"/relation-maps/{relation_map_id}/render", json_body=body, timeout=timeout)
+
+
+async def verify_relation_map(
+    relation_map_id: str,
+    expected_min_nodes: int = 0,
+    expected_min_edges: int = 0,
+    expected_rendered_nodes: int = 0,
+    relationship_types: Optional[list[str]] = None,
+    max_depth: int = 3,
+) -> dict[str, Any]:
+    """Verify graph traversal, native settings validity, and rendered presentation count."""
+    body: dict[str, Any] = {
+        "expectedMinNodes": expected_min_nodes,
+        "expectedMinEdges": expected_min_edges,
+        "expectedRenderedNodes": expected_rendered_nodes,
+        "maxDepth": max_depth,
+    }
+    if relationship_types is not None:
+        body["relationshipTypes"] = relationship_types
+    return await _request("POST", f"/relation-maps/{relation_map_id}/verify", json_body=body)
+
+
+async def compare_relation_maps(
+    left_relation_map_id: str,
+    right_relation_map_id: str,
+    include_presentations: bool = True,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Compare two Relation Maps using the native inspection serializers."""
+    return await _request(
+        "POST",
+        "/relation-maps/compare",
+        json_body={
+            "leftRelationMapId": left_relation_map_id,
+            "rightRelationMapId": right_relation_map_id,
+            "includePresentations": include_presentations,
+            "includeRaw": include_raw,
+        },
+    )
+
+
+async def create_snapshot(
+    target_type: str,
+    target_id: Optional[str] = None,
+    name: Optional[str] = None,
+    include_raw: bool = False,
+    include_presentations: Optional[bool] = None,
+    include_properties: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Create an in-memory before/after inspection snapshot."""
+    body: dict[str, Any] = {
+        "targetType": target_type,
+        "includeRaw": include_raw,
+    }
+    if target_id is not None:
+        body["targetId"] = target_id
+    if name is not None:
+        body["name"] = name
+    if include_presentations is not None:
+        body["includePresentations"] = include_presentations
+    if include_properties is not None:
+        body["includeProperties"] = include_properties
+    return await _request("POST", "/snapshots", json_body=body)
+
+
+async def list_snapshots() -> dict[str, Any]:
+    """List in-memory snapshots held by the Java bridge."""
+    return await _request("GET", "/snapshots")
+
+
+async def get_snapshot(snapshot_id: str) -> dict[str, Any]:
+    """Get one in-memory snapshot payload."""
+    return await _request("GET", f"/snapshots/{snapshot_id}")
+
+
+async def delete_snapshot(snapshot_id: str) -> dict[str, Any]:
+    """Delete one in-memory snapshot without touching the model."""
+    return await _request("DELETE", f"/snapshots/{snapshot_id}")
+
+
+async def diff_snapshots(
+    before_snapshot_id: str,
+    after_snapshot_id: str,
+    ignore_paths: Optional[list[str]] = None,
+    include_details: bool = True,
+    max_changes: int = 500,
+) -> dict[str, Any]:
+    """Diff two in-memory snapshots with stable JSON paths."""
+    body: dict[str, Any] = {
+        "beforeSnapshotId": before_snapshot_id,
+        "afterSnapshotId": after_snapshot_id,
+        "includeDetails": include_details,
+        "maxChanges": max_changes,
+    }
+    if ignore_paths is not None:
+        body["ignorePaths"] = ignore_paths
+    return await _request("POST", "/snapshots/diff", json_body=body)
+
+
+async def get_validation_capabilities() -> dict[str, Any]:
+    """Probe native CATIA validation API availability."""
+    return await _request("GET", "/validation/capabilities")
+
+
+async def list_validation_suites() -> dict[str, Any]:
+    """List native validation suite candidates and constraints."""
+    return await _request("GET", "/validation/suites")
+
+
+async def run_native_validation(
+    suite_id: Optional[str] = None,
+    constraint_ids: Optional[list[str]] = None,
+    scope_element_ids: Optional[list[str]] = None,
+    whole_project: Optional[bool] = None,
+    recursive: bool = True,
+    exclude_read_only: bool = True,
+    minimum_severity: Optional[str] = None,
+    open_native_window: bool = False,
+    name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Run native CATIA validation against a suite or explicit constraints."""
+    body: dict[str, Any] = {
+        "recursive": recursive,
+        "excludeReadOnly": exclude_read_only,
+        "openNativeWindow": open_native_window,
+    }
+    if suite_id is not None:
+        body["suiteId"] = suite_id
+    if constraint_ids is not None:
+        body["constraintIds"] = constraint_ids
+    if scope_element_ids is not None:
+        body["scopeElementIds"] = scope_element_ids
+    if whole_project is not None:
+        body["wholeProject"] = whole_project
+    if minimum_severity is not None:
+        body["minimumSeverity"] = minimum_severity
+    if name is not None:
+        body["name"] = name
+    return await _request("POST", "/validation/run", json_body=body)
+
+
+async def get_validation_result(run_id: str) -> dict[str, Any]:
+    """Fetch a cached native validation run result."""
+    return await _request("GET", f"/validation/results/{run_id}")
+
+
+async def list_probe_templates() -> dict[str, Any]:
+    """List safe built-in CATIA API discovery probes."""
+    return await _request("GET", "/probes/templates")
+
+
+async def execute_probe(
+    template: Optional[str] = None,
+    mode: str = "read",
+    script: Optional[str] = None,
+    language: str = "javaReflection",
+    timeout_ms: int = 5000,
+    requires_project: bool = True,
+    description: Optional[str] = None,
+    operation: Optional[str] = None,
+    class_name: Optional[str] = None,
+    method_name: Optional[str] = None,
+    relation_map_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Execute a controlled built-in probe. Arbitrary scripts are refused by Java."""
+    body: dict[str, Any] = {
+        "mode": mode,
+        "language": language,
+        "timeoutMs": timeout_ms,
+        "requiresProject": requires_project,
+    }
+    if template is not None:
+        body["template"] = template
+    if script is not None:
+        body["script"] = script
+    if description is not None:
+        body["description"] = description
+    if operation is not None:
+        body["operation"] = operation
+    if class_name is not None:
+        body["className"] = class_name
+    if method_name is not None:
+        body["methodName"] = method_name
+    if relation_map_id is not None:
+        body["relationMapId"] = relation_map_id
+    return await _request("POST", "/probes/execute", json_body=body)
+
+
+async def get_advanced_capability(feature: str) -> dict[str, Any]:
+    """Get a probe-first capability contract for an advanced route family."""
+    return await _request("GET", f"/{feature}/capabilities")
+
+
+async def run_validation(
+    suite_id: Optional[str] = None,
+    constraint_ids: Optional[list[str]] = None,
+    scope_mode: str = "project",
+    scope_element_ids: Optional[list[str]] = None,
+    min_severity: Optional[str] = None,
+    timeout_ms: int = 30000,
+) -> dict[str, Any]:
+    """Run or preview a bounded native validation request."""
+    body: dict[str, Any] = {"scopeMode": scope_mode, "timeoutMs": timeout_ms}
+    if suite_id is not None:
+        body["suiteId"] = suite_id
+    if constraint_ids is not None:
+        body["constraintIds"] = constraint_ids
+    if scope_element_ids is not None:
+        body["scopeElementIds"] = scope_element_ids
+    if min_severity is not None:
+        body["minSeverity"] = min_severity
+    return await _request("POST", "/validation/run", json_body=body)
+
+
+async def get_report_capabilities() -> dict[str, Any]:
+    """Probe Report Wizard API support."""
+    return await get_advanced_capability("reports")
+
+
+async def list_report_templates() -> dict[str, Any]:
+    """List report templates when native readback is promoted."""
+    return await _request("GET", "/reports/templates")
+
+
+async def generate_report_preview(
+    template_id: Optional[str] = None,
+    template_name: Optional[str] = None,
+    report_name: Optional[str] = None,
+    output_path: Optional[str] = None,
+    output_format: Optional[str] = None,
+    scope_element_ids: Optional[list[str]] = None,
+    recursive: Optional[bool] = None,
+    parameters: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Preview a guarded Report Wizard generation request."""
+    body: dict[str, Any] = {}
+    if template_id is not None:
+        body["templateId"] = template_id
+    if template_name is not None:
+        body["templateName"] = template_name
+    if report_name is not None:
+        body["reportName"] = report_name
+    if output_path is not None:
+        body["outputPath"] = output_path
+    if output_format is not None:
+        body["format"] = output_format
+    if scope_element_ids is not None:
+        body["scopeElementIds"] = scope_element_ids
+    if recursive is not None:
+        body["recursive"] = recursive
+    if parameters is not None:
+        body["parameters"] = parameters
+    return await _request("POST", "/reports/generate-preview", json_body=body)
+
+
+async def generate_report(
+    template_id: Optional[str] = None,
+    template_name: Optional[str] = None,
+    report_name: Optional[str] = None,
+    output_path: Optional[str] = None,
+    output_format: Optional[str] = None,
+    scope_element_ids: Optional[list[str]] = None,
+    recursive: Optional[bool] = None,
+    display_in_viewer: Optional[bool] = None,
+    parameters: Optional[dict[str, Any]] = None,
+    allow_write: bool = False,
+) -> dict[str, Any]:
+    """Generate a Report Wizard artifact through the native bridge endpoint."""
+    body: dict[str, Any] = {"allowWrite": allow_write}
+    if template_id is not None:
+        body["templateId"] = template_id
+    if template_name is not None:
+        body["templateName"] = template_name
+    if report_name is not None:
+        body["reportName"] = report_name
+    if output_path is not None:
+        body["outputPath"] = output_path
+    if output_format is not None:
+        body["format"] = output_format
+    if scope_element_ids is not None:
+        body["scopeElementIds"] = scope_element_ids
+    if recursive is not None:
+        body["recursive"] = recursive
+    if display_in_viewer is not None:
+        body["displayInViewer"] = display_in_viewer
+    if parameters is not None:
+        body["parameters"] = parameters
+    return await _request("POST", "/reports/generate", json_body=body)
+
+
+async def get_report_job(job_id: str) -> dict[str, Any]:
+    """Fetch a Report Wizard generation job status."""
+    return await _request("GET", f"/reports/jobs/{job_id}")
+
+
+async def get_requirements_capabilities() -> dict[str, Any]:
+    """Probe Requirements/ReqIF API support."""
+    return await get_advanced_capability("requirements")
+
+
+async def get_import_export_capabilities() -> dict[str, Any]:
+    """Probe bridge-owned and native import/export support."""
+    return await _request("GET", "/import-export/capabilities")
+
+
+async def export_requirements(
+    scope_ids: Optional[list[str]] = None,
+    root_id: Optional[str] = None,
+    package_id: Optional[str] = None,
+    format: str = "json",
+    output_path: Optional[str] = None,
+    limit: int = 1000,
+) -> dict[str, Any]:
+    """Export requirement-like elements through the import/export route."""
+    body: dict[str, Any] = {"format": format, "limit": limit}
+    if scope_ids is not None:
+        body["scopeIds"] = scope_ids
+    if root_id is not None:
+        body["rootId"] = root_id
+    if package_id is not None:
+        body["packageId"] = package_id
+    if output_path is not None:
+        body["outputPath"] = output_path
+    return await _request("POST", "/import-export/requirements/export", json_body=body)
+
+
+async def preview_requirements_import(
+    source_path: Optional[str] = None,
+    source_rows: Optional[list[dict[str, Any]]] = None,
+    requirements: Optional[list[dict[str, Any]]] = None,
+    csv_text: Optional[str] = None,
+    target_package_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview requirement import through the import/export route."""
+    body: dict[str, Any] = {}
+    if source_path is not None:
+        body["sourcePath"] = source_path
+    if source_rows is not None:
+        body["sourceRows"] = source_rows
+        body["rows"] = source_rows
+    if requirements is not None:
+        body["requirements"] = requirements
+    if csv_text is not None:
+        body["csvText"] = csv_text
+    if target_package_id is not None:
+        body["targetPackageId"] = target_package_id
+    return await _request("POST", "/import-export/requirements/import-preview", json_body=body)
+
+
+async def apply_requirements_import(
+    patch_plan: Optional[dict[str, Any]] = None,
+    *,
+    target_package_id: Optional[str] = None,
+    requirements: Optional[list[dict[str, Any]]] = None,
+    rows: Optional[list[dict[str, Any]]] = None,
+    csv_text: Optional[str] = None,
+    format: str = "json",
+    dry_run: bool = True,
+    allow_write: bool = False,
+) -> dict[str, Any]:
+    """Apply or dry-run a reviewed requirements import request."""
+    body: dict[str, Any] = {"format": format, "dryRun": dry_run, "allowWrite": allow_write}
+    if patch_plan is not None:
+        body["patchPlan"] = patch_plan
+    if target_package_id is not None:
+        body["targetPackageId"] = target_package_id
+    if requirements is not None:
+        body["requirements"] = requirements
+    if rows is not None:
+        body["rows"] = rows
+    if csv_text is not None:
+        body["csvText"] = csv_text
+    return await _request("POST", "/import-export/requirements/apply", json_body=body)
+
+
+async def export_requirements_preview(
+    scope_ids: Optional[list[str]] = None,
+    format: str = "csv",
+    output_path: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview requirements export without mutating the model."""
+    body: dict[str, Any] = {"format": format}
+    if scope_ids is not None:
+        body["scopeIds"] = scope_ids
+    if output_path is not None:
+        body["outputPath"] = output_path
+    return await _request("POST", "/requirements/export", json_body=body)
+
+
+async def import_requirements_preview(
+    source_path: Optional[str] = None,
+    source_rows: Optional[list[dict[str, Any]]] = None,
+    target_package_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview requirements import/diff without writing."""
+    body: dict[str, Any] = {}
+    if source_path is not None:
+        body["sourcePath"] = source_path
+    if source_rows is not None:
+        body["sourceRows"] = source_rows
+    if target_package_id is not None:
+        body["targetPackageId"] = target_package_id
+    return await _request("POST", "/requirements/import/preview", json_body=body)
+
+
+async def get_simulation_capabilities() -> dict[str, Any]:
+    """Probe Simulation Toolkit support."""
+    return await get_advanced_capability("simulation")
+
+
+async def list_simulation_configurations() -> dict[str, Any]:
+    """List executable simulation configurations when native readback is promoted."""
+    return await _request("GET", "/simulation/configurations")
+
+
+async def run_simulation_preview(
+    configuration_id: Optional[str] = None,
+    timeout_ms: int = 30000,
+) -> dict[str, Any]:
+    """Preview a bounded simulation run request."""
+    body: dict[str, Any] = {"timeoutMs": timeout_ms}
+    if configuration_id is not None:
+        body["configurationId"] = configuration_id
+    return await _request("POST", "/simulation/run-preview", json_body=body)
+
+
+async def run_simulation(
+    configuration_id: Optional[str] = None,
+    target_id: Optional[str] = None,
+    timeout_ms: int = 30000,
+    allow_execute: bool = False,
+    async_run: bool = False,
+) -> dict[str, Any]:
+    """Run the guarded simulation endpoint."""
+    body: dict[str, Any] = {"timeoutMs": timeout_ms, "allowExecute": allow_execute}
+    if configuration_id is not None:
+        body["configurationId"] = configuration_id
+    if target_id is not None:
+        body["targetId"] = target_id
+    return await _request("POST", "/simulation/run-async" if async_run else "/simulation/run", json_body=body)
+
+
+async def get_simulation_result(run_id: str) -> dict[str, Any]:
+    """Fetch simulation result status."""
+    return await _request("GET", f"/simulation/results/{run_id}")
+
+
+async def terminate_simulation(run_id: str) -> dict[str, Any]:
+    """Terminate an active simulation run."""
+    return await _request("POST", f"/simulation/results/{run_id}/terminate", json_body={})
+
+
+async def get_teamwork_capabilities() -> dict[str, Any]:
+    """Probe Teamwork/Magic Collaboration Studio support."""
+    return await get_advanced_capability("teamwork")
+
+
+async def get_teamwork_project() -> dict[str, Any]:
+    """Read Teamwork project metadata when native readback is promoted."""
+    return await _request("GET", "/teamwork/project")
+
+
+async def preview_teamwork_commit(message: Optional[str] = None) -> dict[str, Any]:
+    """Preview a Teamwork commit without changing the server project."""
+    body: dict[str, Any] = {}
+    if message is not None:
+        body["message"] = message
+    return await _request("POST", "/teamwork/commit-preview", json_body=body)
+
+
+async def preview_teamwork_update(message: Optional[str] = None) -> dict[str, Any]:
+    """Preview a Teamwork update without changing the server project."""
+    body: dict[str, Any] = {}
+    if message is not None:
+        body["message"] = message
+    return await _request("POST", "/teamwork/update-preview", json_body=body)
+
+
+async def list_teamwork_descriptors() -> dict[str, Any]:
+    return await _request("GET", "/teamwork/descriptors")
+
+
+async def list_teamwork_branches() -> dict[str, Any]:
+    return await _request("GET", "/teamwork/branches")
+
+
+async def get_teamwork_history() -> dict[str, Any]:
+    return await _request("GET", "/teamwork/history")
+
+
+async def get_teamwork_locks() -> dict[str, Any]:
+    return await _request("GET", "/teamwork/locks")
+
+
+async def get_datahub_capabilities() -> dict[str, Any]:
+    """Probe DataHub/DOORS integration support."""
+    return await get_advanced_capability("datahub")
+
+
+async def list_datahub_sources() -> dict[str, Any]:
+    """List DataHub sources when native readback is promoted."""
+    return await _request("GET", "/datahub/sources")
+
+
+async def preview_datahub_sync(source_id: Optional[str] = None, scope_id: Optional[str] = None) -> dict[str, Any]:
+    """Preview DataHub synchronization without writing."""
+    body: dict[str, Any] = {}
+    if source_id is not None:
+        body["sourceId"] = source_id
+    if scope_id is not None:
+        body["scopeId"] = scope_id
+    return await _request("POST", "/datahub/sync-preview", json_body=body)
+
+
+async def get_criteria_capabilities() -> dict[str, Any]:
+    return await _request("GET", "/criteria/capabilities")
+
+
+async def list_criteria_templates(target: Optional[str] = None) -> dict[str, Any]:
+    params = {"target": target} if target is not None else None
+    return await _request("GET", "/criteria/templates", params=params)
+
+
+async def build_criteria_expression(
+    relationship_kind: Optional[str] = None,
+    direction: str = "both",
+    target: Optional[str] = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"direction": direction}
+    if relationship_kind is not None:
+        body["relationshipKind"] = relationship_kind
+    if target is not None:
+        body["target"] = target
+    return await _request("POST", "/criteria/build", json_body=body)
+
+
+async def parse_criteria_expression(expression: dict[str, Any] | str) -> dict[str, Any]:
+    return await _request("POST", "/criteria/parse", json_body={"expression": expression})
+
+
+async def apply_criteria_template(
+    target_id: str,
+    template_id: Optional[str] = None,
+    expression: Optional[dict[str, Any]] = None,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    return await _request(
+        "POST",
+        "/criteria/apply",
+        json_body={
+            "targetId": target_id,
+            "templateId": template_id,
+            "expression": expression,
+            "refresh": refresh,
+        },
+    )
+
+
+async def capture_criteria_template_from_diff(
+    before_snapshot_id: str,
+    after_snapshot_id: str,
+    target_kind: Optional[str] = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "beforeSnapshotId": before_snapshot_id,
+        "afterSnapshotId": after_snapshot_id,
+    }
+    if target_kind is not None:
+        body["targetKind"] = target_kind
+    return await _request("POST", "/criteria/capture-template-from-diff", json_body=body)
+
+
+async def get_profile_capabilities() -> dict[str, Any]:
+    return await _request("GET", "/profiles/capabilities")
+
+
+async def export_profile_summary() -> dict[str, Any]:
+    return await _request("POST", "/profiles/export-summary", json_body={})
+
+
+async def preview_profile_operation(operation: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    route_by_operation = {
+        "create-profile": "/profiles/create",
+        "create-stereotype": "/profiles/stereotypes/create",
+        "create-tag": "/profiles/tags/create",
+        "apply-profile": "/profiles/apply",
+        "set-tags": "/profiles/tags",
+    }
+    route = route_by_operation.get(operation)
+    if route is None:
+        raise ValueError(f"Unsupported profile operation: {operation}")
+    method = "PUT" if operation == "set-tags" else "POST"
+    return await _request(method, route, json_body=payload or {})
+
+
+async def get_variant_capabilities() -> dict[str, Any]:
+    """Probe native or bridge-owned variant support."""
+    return await get_advanced_capability("variants")
+
+
+async def analyze_variants_preview(
+    configuration_ids: Optional[list[str]] = None,
+    scope_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Preview variant/product-line analysis without writes."""
+    body: dict[str, Any] = {}
+    if configuration_ids is not None:
+        body["configurationIds"] = configuration_ids
+    if scope_ids is not None:
+        body["scopeIds"] = scope_ids
+    return await _request("POST", "/variants/configurations/evaluate", json_body=body)
+
+
+async def install_variant_pattern_preview(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    return await _request("POST", "/variants/pattern/install-preview", json_body=payload or {})
+
+
+async def export_variant_configuration(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    return await _request("POST", "/variants/configurations/export", json_body=payload or {})
+
+
+async def get_extension_capabilities() -> dict[str, Any]:
+    """Probe safety/cyber extension support."""
+    return await get_advanced_capability("extensions")
+
+
+async def scan_extensions(
+    targets: Optional[list[str]] = None,
+    scope_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview a read-only safety/cyber extension model scan."""
+    body: dict[str, Any] = {}
+    if targets is not None:
+        body["targets"] = targets
+    if scope_id is not None:
+        body["scopeId"] = scope_id
+    return await _request("POST", "/extensions/model-scan", json_body=body)
+
+
+async def list_extension_profiles() -> dict[str, Any]:
+    return await _request("GET", "/extensions/profiles")
+
+
+async def install_extension_pattern_preview(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    return await _request("POST", "/extensions/pattern/install-preview", json_body=payload or {})
+
+
+async def get_typed_diagram_capabilities() -> dict[str, Any]:
+    return await _request("GET", "/typed-diagrams/capabilities")
+
+
+async def list_typed_diagrams() -> dict[str, Any]:
+    return await _request("GET", "/typed-diagrams")
+
+
+async def inspect_typed_diagram(diagram_id: str) -> dict[str, Any]:
+    return await _request("POST", "/typed-diagrams/inspect", json_body={"diagramId": diagram_id})
+
+
+async def preview_typed_diagram_operation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    route_by_operation = {
+        "sequence-message": "/typed-diagrams/sequence/messages",
+        "state-transition": "/typed-diagrams/state/transitions",
+        "parametric-binding": "/typed-diagrams/parametric/bindings",
+        "legend-apply": "/typed-diagrams/legends/apply",
+    }
+    route = route_by_operation.get(operation)
+    if route is None:
+        raise ValueError(f"Unsupported typed diagram operation: {operation}")
+    return await _request("POST", route, json_body=payload)
+
+
+async def refuse_compliance_claim(
+    claim_type: str,
+    evidence_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Return the bridge's explicit refusal contract for compliance claims."""
+    body: dict[str, Any] = {"claimType": claim_type}
+    if evidence_ids is not None:
+        body["evidenceIds"] = evidence_ids
+    return await _request("POST", "/extensions/compliance-claim", json_body=body)
+
+
+async def get_traceability_graph(
+    root_element_ids: Optional[list[str]] = None,
+    context_element_id: Optional[str] = None,
+    relation_map_id: Optional[str] = None,
+    relationship_types: Optional[list[str]] = None,
+    direction: str = "both",
+    max_depth: int = 3,
+    max_nodes: int = 250,
+) -> dict[str, Any]:
+    """Build a read-only relationship graph from one or more root elements."""
+    body: dict[str, Any] = {
+        "direction": direction,
+        "maxDepth": max_depth,
+        "maxNodes": max_nodes,
+    }
+    if root_element_ids is not None:
+        body["rootElementIds"] = root_element_ids
+    if context_element_id is not None:
+        body["contextElementId"] = context_element_id
+    if relationship_types is not None:
+        body["relationshipTypes"] = relationship_types
+
+    if relation_map_id is not None:
+        return await _request(
+            "POST",
+            f"/relation-maps/{relation_map_id}/graph",
+            json_body=body,
+        )
+    return await _request(
+        "POST",
+        "/relation-maps/traceability-graph",
+        json_body=body,
+    )
+
+
+async def get_diagram_properties(
+    diagram_id: str,
+    include_raw: bool = False,
+    include_presentation_properties: bool = False,
+    summary_only: bool = True,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Dump diagram settings and a paged summary of presentation properties."""
+    return await _request(
+        "GET",
+        f"/inspect/diagrams/{diagram_id}/properties",
+        params={
+            "includeRaw": include_raw,
+            "includePresentationProperties": include_presentation_properties,
+            "summaryOnly": summary_only,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+async def get_presentation_properties(
+    diagram_id: str,
+    presentation_id: str,
+    include_raw: bool = False,
+    summary_only: bool = False,
+) -> dict[str, Any]:
+    """Dump full properties for one diagram presentation element."""
+    return await _request(
+        "GET",
+        f"/inspect/diagrams/{diagram_id}/presentations/{presentation_id}/properties",
+        params={"includeRaw": include_raw, "summaryOnly": summary_only},
+    )
+
 # -- Diagrams -----------------------------------------------------------------
 
 
@@ -759,6 +1882,11 @@ async def create_diagram(
     type: str,
     name: str,
     parent_id: str,
+    relation_map_context_id: Optional[str] = None,
+    relation_map_scope_ids: Optional[list[str]] = None,
+    relation_map_element_types: Optional[list[str]] = None,
+    relation_map_dependency_criteria: Optional[list[str]] = None,
+    relation_map_depth: Optional[int] = None,
 ) -> dict[str, Any]:
     """Create a new diagram."""
     body: dict[str, Any] = {
@@ -766,6 +1894,20 @@ async def create_diagram(
         "name": name,
         "parentId": parent_id,
     }
+    if relation_map_context_id is not None:
+        body["relationMapContextId"] = relation_map_context_id
+    if relation_map_scope_ids is not None:
+        body["relationMapScopeIds"] = relation_map_scope_ids
+    if relation_map_element_types is not None:
+        body["relationMapElementTypes"] = relation_map_element_types
+    if relation_map_dependency_criteria is not None:
+        body["relationMapDependencyCriteria"] = relation_map_dependency_criteria
+    if relation_map_depth is not None:
+        if relation_map_depth < -1 or relation_map_depth > 100:
+            raise ValueError(
+                "relation_map_depth must be -1 for indefinite depth, or between 0 and 100"
+            )
+        body["relationMapDepth"] = relation_map_depth
     return await _request("POST", "/diagrams", json_body=body)
 
 
@@ -808,9 +1950,19 @@ async def get_diagram_image(
     max_width: Optional[int] = None,
     max_height: Optional[int] = None,
     quality: int = 85,
+    scale_percentage: Optional[int] = None,
 ) -> dict[str, Any]:
-    """Export a diagram image, optionally omitting/resizing/transcoding it client-side."""
-    result = await _request("GET", f"/diagrams/{diagram_id}/image")
+    """Export a diagram image, optionally scaling natively or transforming client-side."""
+    params: dict[str, Any] = {}
+    if scale_percentage is not None:
+        if scale_percentage < 25 or scale_percentage > 1000:
+            raise ValueError("scale_percentage must be between 25 and 1000")
+        params["scalePercentage"] = scale_percentage
+    result = await _request(
+        "GET",
+        f"/diagrams/{diagram_id}/image",
+        params=params or None,
+    )
     return _transform_diagram_image(
         result,
         include_image=include_image,

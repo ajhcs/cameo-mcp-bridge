@@ -2,13 +2,15 @@
 <plugin
     id="com.claude.cameo.bridge"
     name="Cameo MCP Bridge"
-    version="2.3.4"
+    version="2.3.5"
     provider-name="Claude Code"
     class="com.claude.cameo.bridge.CameoMCPBridgePlugin">
     <requires>
         <api version="1.0"/>
+        <required-plugin id="com.nomagic.magicdraw.diagramtable" name="Diagram Table" version="2024x"/>
+        <required-plugin id="com.nomagic.magicdraw.visualization.relationshipmap" name="Relation Map" version="2024x"/>
     </requires>
     <runtime>
-        <library name="cameo-mcp-bridge-2.3.4.jar"/>
+        <library name="cameo-mcp-bridge-2.3.5.jar"/>
     </runtime>
 </plugin>

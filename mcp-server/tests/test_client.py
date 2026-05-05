@@ -227,6 +227,141 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             request.await_args.kwargs["json_body"],
         )
 
+    async def test_get_diagram_image_passes_native_scale_percentage(self) -> None:
+        with patch(
+            "cameo_mcp.client._request",
+            new=AsyncMock(return_value={"format": "png", "image": _make_base64_png()}),
+        ) as request:
+            result = await client.get_diagram_image("dia-1", scale_percentage=300)
+
+        self.assertIn("imageBytes", result)
+        request.assert_awaited_once()
+        self.assertEqual("GET", request.await_args.args[0])
+        self.assertEqual("/diagrams/dia-1/image", request.await_args.args[1])
+        self.assertEqual({"scalePercentage": 300}, request.await_args.kwargs["params"])
+
+    async def test_get_diagram_image_rejects_invalid_native_scale_percentage(self) -> None:
+        with self.assertRaisesRegex(ValueError, "scale_percentage must be between 25 and 1000"):
+            await client.get_diagram_image("dia-1", scale_percentage=10)
+
+    async def test_run_validation_passes_bounded_request_body(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"dryRun": True})) as request:
+            await client.run_validation(
+                suite_id="suite-1",
+                scope_mode="elements",
+                scope_element_ids=["el-1"],
+                min_severity="warning",
+                timeout_ms=12000,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("POST", request.await_args.args[0])
+        self.assertEqual("/validation/run", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "scopeMode": "elements",
+                "timeoutMs": 12000,
+                "suiteId": "suite-1",
+                "scopeElementIds": ["el-1"],
+                "minSeverity": "warning",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_generate_report_preview_passes_template_and_parameters(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"dryRun": True})) as request:
+            await client.generate_report_preview(
+                template_id="template-1",
+                template_name="Use Case (Simple)",
+                report_name="Built-in",
+                output_path="C:/tmp/report.docx",
+                output_format="docx",
+                scope_element_ids=["pkg-1"],
+                recursive=True,
+                parameters={"scopeId": "pkg-1"},
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("POST", request.await_args.args[0])
+        self.assertEqual("/reports/generate-preview", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "templateId": "template-1",
+                "templateName": "Use Case (Simple)",
+                "reportName": "Built-in",
+                "outputPath": "C:/tmp/report.docx",
+                "format": "docx",
+                "scopeElementIds": ["pkg-1"],
+                "recursive": True,
+                "parameters": {"scopeId": "pkg-1"},
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_generate_report_passes_native_generation_options(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"generated": True})) as request:
+            await client.generate_report(
+                template_name="Use Case (Simple)",
+                output_path="C:/tmp/report.docx",
+                output_format="docx",
+                scope_element_ids=["pkg-1"],
+                recursive=True,
+                display_in_viewer=False,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("POST", request.await_args.args[0])
+        self.assertEqual("/reports/generate", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "allowWrite": False,
+                "templateName": "Use Case (Simple)",
+                "outputPath": "C:/tmp/report.docx",
+                "format": "docx",
+                "scopeElementIds": ["pkg-1"],
+                "recursive": True,
+                "displayInViewer": False,
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_export_requirements_passes_root_filters(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"count": 2})) as request:
+            await client.export_requirements(root_id="pkg-1", package_id="pkg-2", limit=25)
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/import-export/requirements/export",
+            json_body={
+                "format": "json",
+                "limit": 25,
+                "rootId": "pkg-1",
+                "packageId": "pkg-2",
+            },
+        )
+
+    async def test_apply_requirements_import_passes_direct_rows(self) -> None:
+        rows = [{"externalId": "REQ-1", "name": "Requirement 1"}]
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"applied": True})) as request:
+            await client.apply_requirements_import(
+                target_package_id="pkg-1",
+                requirements=rows,
+                dry_run=False,
+                allow_write=True,
+            )
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/import-export/requirements/apply",
+            json_body={
+                "format": "json",
+                "dryRun": False,
+                "allowWrite": True,
+                "targetPackageId": "pkg-1",
+                "requirements": rows,
+            },
+        )
+
     async def test_create_relationship_omits_optional_connector_fields_when_absent(self) -> None:
         with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
             await client.create_relationship(
@@ -472,6 +607,400 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
             request.await_args.kwargs["params"],
         )
 
+    async def test_create_matrix_normalizes_dependency_alias(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_matrix(
+                kind="Dependency Matrix",
+                parent_id="pkg-1",
+                row_types=["OpaqueAction"],
+                column_types=["OpaqueAction"],
+            )
+
+        self.assertEqual(
+            {
+                "kind": "dependency",
+                "parentId": "pkg-1",
+                "rowTypes": ["OpaqueAction"],
+                "columnTypes": ["OpaqueAction"],
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_relation_map_includes_native_graph_settings(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"created": True})) as request:
+            await client.create_relation_map(
+                parent_id="pkg-1",
+                name="Traceability Map",
+                context_element_id="req-1",
+                scope_ids=["pkg-2"],
+                element_type_ids=["stereotype-1"],
+                dependency_criteria=["DeriveReqt", "Satisfy"],
+                depth=2,
+                layout="hierarchic",
+                legend_enabled=True,
+                show_stereotypes=True,
+                make_element_as_context=True,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("POST", request.await_args.args[0])
+        self.assertEqual("/relation-maps", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "parentId": "pkg-1",
+                "name": "Traceability Map",
+                "contextElementId": "req-1",
+                "scopeIds": ["pkg-2"],
+                "elementTypeIds": ["stereotype-1"],
+                "dependencyCriteria": ["DeriveReqt", "Satisfy"],
+                "depth": 2,
+                "layout": "hierarchic",
+                "legendEnabled": True,
+                "showStereotypes": True,
+                "makeElementAsContext": True,
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_configure_relation_map_omits_absent_settings(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"configured": True})) as request:
+            await client.configure_relation_map(
+                relation_map_id="rm-1",
+                context_element_id="block-1",
+                depth=3,
+                legend_enabled=False,
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("PUT", request.await_args.args[0])
+        self.assertEqual("/relation-maps/rm-1/settings", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "contextElementId": "block-1",
+                "depth": 3,
+                "legendEnabled": False,
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_refresh_relation_map_uses_relation_map_endpoint(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"refreshed": True})) as request:
+            await client.refresh_relation_map("rm-1")
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/relation-maps/rm-1/refresh",
+            json_body={"refreshTimeoutSeconds": 120},
+            timeout=120.0,
+        )
+
+    async def test_ui_state_uses_summary_query(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"selection": {}})) as request:
+            await client.get_ui_state(summary_only=True)
+
+        request.assert_awaited_once_with(
+            "GET",
+            "/ui/state",
+            params={"summaryOnly": True},
+        )
+
+    async def test_active_diagram_and_selection_paths(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={})) as request:
+            await client.get_active_diagram()
+            await client.get_ui_selection()
+
+        self.assertEqual(("GET", "/ui/active-diagram"), request.await_args_list[0].args)
+        self.assertEqual(("GET", "/ui/selection"), request.await_args_list[1].args)
+
+    async def test_relation_map_raw_settings_path_and_params(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"rawSettings": {}})) as request:
+            await client.get_relation_map_raw_settings("rm-1", include_raw=True, summary_only=True)
+
+        request.assert_awaited_once_with(
+            "GET",
+            "/relation-maps/rm-1/settings/raw",
+            params={"includeRaw": True, "summaryOnly": True},
+        )
+
+    async def test_relation_map_presentations_path_and_params(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"presentationCount": 0})) as request:
+            await client.get_relation_map_presentations(
+                "rm-1",
+                include_properties=True,
+                include_raw=True,
+                summary_only=False,
+                limit=10,
+                offset=5,
+            )
+
+        request.assert_awaited_once_with(
+            "GET",
+            "/relation-maps/rm-1/presentations",
+            params={
+                "includeProperties": True,
+                "includeRaw": True,
+                "summaryOnly": False,
+                "limit": 10,
+                "offset": 5,
+            },
+        )
+
+    async def test_relation_map_mutation_paths_and_bodies(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={})) as request:
+            await client.list_relation_map_criteria_templates()
+            await client.set_relation_map_criteria(
+                "rm-1",
+                mode="append",
+                criteria=[{"template": "satisfy.sourceToTarget"}],
+                refresh=False,
+            )
+            await client.expand_relation_map("rm-1", mode="byDepth", depth=2, layout="hierarchic")
+            await client.collapse_relation_map("rm-1", element_ids=["el-1"], refresh=False)
+            await client.render_relation_map("rm-1", expand="all", include_image=False, scale_percentage=150)
+            await client.verify_relation_map(
+                "rm-1",
+                expected_min_nodes=2,
+                expected_min_edges=1,
+                expected_rendered_nodes=3,
+                relationship_types=["Satisfy"],
+                max_depth=4,
+            )
+            await client.compare_relation_maps("left", "right", include_presentations=False, include_raw=True)
+
+        self.assertEqual(("GET", "/relation-maps/criteria/templates"), request.await_args_list[0].args)
+        request.assert_any_await(
+            "PUT",
+            "/relation-maps/rm-1/criteria",
+            json_body={
+                "mode": "append",
+                "criteria": [{"template": "satisfy.sourceToTarget"}],
+                "refresh": False,
+            },
+        )
+        request.assert_any_await(
+            "POST",
+            "/relation-maps/rm-1/expand",
+            json_body={
+                "mode": "byDepth",
+                "refresh": False,
+                "depth": 2,
+                "layout": "hierarchic",
+                "actionTimeoutSeconds": 120,
+            },
+            timeout=120.0,
+        )
+        request.assert_any_await(
+            "POST",
+            "/relation-maps/rm-1/collapse",
+            json_body={
+                "mode": "all",
+                "refresh": False,
+                "elementIds": ["el-1"],
+                "actionTimeoutSeconds": 120,
+            },
+            timeout=120.0,
+        )
+        request.assert_any_await(
+            "POST",
+            "/relation-maps/rm-1/render",
+            json_body={
+                "refresh": False,
+                "expand": "all",
+                "scalePercentage": 150,
+                "includeImage": False,
+                "includePresentationSummary": True,
+                "renderTimeoutSeconds": 120,
+            },
+            timeout=120.0,
+        )
+        request.assert_any_await(
+            "POST",
+            "/relation-maps/rm-1/verify",
+            json_body={
+                "expectedMinNodes": 2,
+                "expectedMinEdges": 1,
+                "expectedRenderedNodes": 3,
+                "maxDepth": 4,
+                "relationshipTypes": ["Satisfy"],
+            },
+        )
+        request.assert_any_await(
+            "POST",
+            "/relation-maps/compare",
+            json_body={
+                "leftRelationMapId": "left",
+                "rightRelationMapId": "right",
+                "includePresentations": False,
+                "includeRaw": True,
+            },
+        )
+
+    async def test_diagram_property_dump_path_and_params(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"presentationCount": 1})) as request:
+            await client.get_diagram_properties(
+                "dia-1",
+                include_raw=True,
+                include_presentation_properties=True,
+                summary_only=False,
+                limit=25,
+                offset=2,
+            )
+
+        request.assert_awaited_once_with(
+            "GET",
+            "/inspect/diagrams/dia-1/properties",
+            params={
+                "includeRaw": True,
+                "includePresentationProperties": True,
+                "summaryOnly": False,
+                "limit": 25,
+                "offset": 2,
+            },
+        )
+
+    async def test_presentation_property_dump_path_and_params(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"presentation": {}})) as request:
+            await client.get_presentation_properties("dia-1", "pe-1", include_raw=True, summary_only=True)
+
+        request.assert_awaited_once_with(
+            "GET",
+            "/inspect/diagrams/dia-1/presentations/pe-1/properties",
+            params={"includeRaw": True, "summaryOnly": True},
+        )
+
+    async def test_create_snapshot_body_omits_absent_optional_flags(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"snapshotId": "s1"})) as request:
+            await client.create_snapshot(
+                target_type="relationMap",
+                target_id="rm-1",
+                name="before",
+                include_raw=True,
+                include_presentations=True,
+            )
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/snapshots",
+            json_body={
+                "targetType": "relationMap",
+                "targetId": "rm-1",
+                "name": "before",
+                "includeRaw": True,
+                "includePresentations": True,
+            },
+        )
+
+    async def test_snapshot_list_get_delete_paths(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={})) as request:
+            await client.list_snapshots()
+            await client.get_snapshot("s1")
+            await client.delete_snapshot("s1")
+
+        self.assertEqual(("GET", "/snapshots"), request.await_args_list[0].args)
+        self.assertEqual(("GET", "/snapshots/s1"), request.await_args_list[1].args)
+        self.assertEqual(("DELETE", "/snapshots/s1"), request.await_args_list[2].args)
+
+    async def test_diff_snapshots_body(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"changeCount": 1})) as request:
+            await client.diff_snapshots(
+                before_snapshot_id="before",
+                after_snapshot_id="after",
+                ignore_paths=["$.createdAt"],
+                include_details=False,
+                max_changes=25,
+            )
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/snapshots/diff",
+            json_body={
+                "beforeSnapshotId": "before",
+                "afterSnapshotId": "after",
+                "ignorePaths": ["$.createdAt"],
+                "includeDetails": False,
+                "maxChanges": 25,
+            },
+        )
+
+    async def test_probe_paths_and_bodies(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={})) as request:
+            await client.list_probe_templates()
+            await client.execute_probe(
+                template="relationMap.listGraphSettingsMethods",
+                description="inspect graph settings",
+            )
+            await client.execute_probe(
+                operation="invokeGraphSettingsGetter",
+                relation_map_id="rm-1",
+                method_name="getDependencyCriterion",
+            )
+
+        self.assertEqual(("GET", "/probes/templates"), request.await_args_list[0].args)
+        request.assert_any_await(
+            "POST",
+            "/probes/execute",
+            json_body={
+                "mode": "read",
+                "language": "javaReflection",
+                "timeoutMs": 5000,
+                "requiresProject": True,
+                "template": "relationMap.listGraphSettingsMethods",
+                "description": "inspect graph settings",
+            },
+        )
+        request.assert_any_await(
+            "POST",
+            "/probes/execute",
+            json_body={
+                "mode": "read",
+                "language": "javaReflection",
+                "timeoutMs": 5000,
+                "requiresProject": True,
+                "operation": "invokeGraphSettingsGetter",
+                "methodName": "getDependencyCriterion",
+                "relationMapId": "rm-1",
+            },
+        )
+
+    async def test_get_traceability_graph_uses_roots_endpoint(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"nodeCount": 2})) as request:
+            await client.get_traceability_graph(
+                root_element_ids=["req-1"],
+                relationship_types=["DeriveReqt", "Satisfy"],
+                direction="incoming",
+                max_depth=2,
+                max_nodes=50,
+            )
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/relation-maps/traceability-graph",
+            json_body={
+                "direction": "incoming",
+                "maxDepth": 2,
+                "maxNodes": 50,
+                "rootElementIds": ["req-1"],
+                "relationshipTypes": ["DeriveReqt", "Satisfy"],
+            },
+        )
+
+    async def test_get_traceability_graph_can_use_relation_map_context(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"nodeCount": 1})) as request:
+            await client.get_traceability_graph(
+                relation_map_id="rm-1",
+                max_depth=4,
+            )
+
+        request.assert_awaited_once_with(
+            "POST",
+            "/relation-maps/rm-1/graph",
+            json_body={
+                "direction": "both",
+                "maxDepth": 4,
+                "maxNodes": 250,
+            },
+        )
+
     async def test_create_diagram_normalizes_internal_block_alias(self) -> None:
         with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"id": "dia-1"})) as request:
             await client.create_diagram(
@@ -502,6 +1031,76 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
                 "type": "IBD",
                 "name": "Context",
                 "parentId": "block-1",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_diagram_normalizes_relationship_map_alias(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"id": "dia-1"})) as request:
+            await client.create_diagram(
+                type="Relationship Map",
+                name="Traceability",
+                parent_id="pkg-1",
+            )
+
+        self.assertEqual(
+            {
+                "type": "RelationMap",
+                "name": "Traceability",
+                "parentId": "pkg-1",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_diagram_sends_relation_map_options(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"id": "dia-1"})) as request:
+            await client.create_diagram(
+                type="RelationMap",
+                name="Traceability",
+                parent_id="pkg-1",
+                relation_map_context_id="block-1",
+                relation_map_scope_ids=["pkg-1"],
+                relation_map_element_types=["Block", "Requirement"],
+                relation_map_dependency_criteria=["<criteria/>"],
+                relation_map_depth=2,
+            )
+
+        self.assertEqual(
+            {
+                "type": "RelationMap",
+                "name": "Traceability",
+                "parentId": "pkg-1",
+                "relationMapContextId": "block-1",
+                "relationMapScopeIds": ["pkg-1"],
+                "relationMapElementTypes": ["Block", "Requirement"],
+                "relationMapDependencyCriteria": ["<criteria/>"],
+                "relationMapDepth": 2,
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_create_diagram_rejects_invalid_relation_map_depth(self) -> None:
+        with self.assertRaisesRegex(ValueError, "relation_map_depth must be"):
+            await client.create_diagram(
+                type="RelationMap",
+                name="Traceability",
+                parent_id="pkg-1",
+                relation_map_depth=-2,
+            )
+
+    async def test_create_diagram_normalizes_content_diagram_alias(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"id": "dia-1"})) as request:
+            await client.create_diagram(
+                type="content",
+                name="Navigation",
+                parent_id="pkg-1",
+            )
+
+        self.assertEqual(
+            {
+                "type": "Content Diagram",
+                "name": "Navigation",
+                "parentId": "pkg-1",
             },
             request.await_args.kwargs["json_body"],
         )
@@ -787,6 +1386,51 @@ class ClientRequestTests(unittest.IsolatedAsyncioTestCase):
                 "dryRun": True,
             },
             request.await_args.kwargs["json_body"],
+        )
+
+    async def test_run_native_validation_builds_request_body(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"runId": "run-1"})) as request:
+            await client.run_native_validation(
+                suite_id="suite-1",
+                scope_element_ids=["pkg-1"],
+                whole_project=False,
+                recursive=False,
+                exclude_read_only=False,
+                minimum_severity="warning",
+                open_native_window=True,
+                name="Review gate",
+            )
+
+        request.assert_awaited_once()
+        self.assertEqual("POST", request.await_args.args[0])
+        self.assertEqual("/validation/run", request.await_args.args[1])
+        self.assertEqual(
+            {
+                "suiteId": "suite-1",
+                "scopeElementIds": ["pkg-1"],
+                "wholeProject": False,
+                "recursive": False,
+                "excludeReadOnly": False,
+                "minimumSeverity": "warning",
+                "openNativeWindow": True,
+                "name": "Review gate",
+            },
+            request.await_args.kwargs["json_body"],
+        )
+
+    async def test_validation_probe_and_result_paths(self) -> None:
+        with patch("cameo_mcp.client._request", new=AsyncMock(return_value={"available": True})) as request:
+            await client.get_validation_capabilities()
+            await client.list_validation_suites()
+            await client.get_validation_result("run-1")
+
+        self.assertEqual(
+            [
+                ("GET", "/validation/capabilities"),
+                ("GET", "/validation/suites"),
+                ("GET", "/validation/results/run-1"),
+            ],
+            [tuple(call.args) for call in request.await_args_list],
         )
 
     async def test_probe_bridge_reports_preferred_paths(self) -> None:

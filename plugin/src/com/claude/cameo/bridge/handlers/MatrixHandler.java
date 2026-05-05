@@ -38,6 +38,24 @@ public class MatrixHandler implements HttpHandler {
 
     private static final Logger LOG = Logger.getLogger(MatrixHandler.class.getName());
     private static final String PREFIX = "/api/v1/matrices/";
+    private static final String UML_DEPENDENCY_CRITERIA = """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <callExpressionSpecification xmlns="http://www.nomagic.com/schemas/MagicDraw/StructuredExpression/2013">
+                <taggedValues>
+                    <entry key="name">
+                        <value>Dependency</value>
+                    </entry>
+                </taggedValues>
+                <argument xsi:type="lookupExpressionSpecification" symbol="THIS" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"/>
+                <expression xsi:type="relationExpressionSpecification" metaclass="Dependency" includeSubtypes="true" direction="DIRECT" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+                    <taggedValues>
+                        <entry key="name">
+                            <value>Dependency</value>
+                        </entry>
+                    </taggedValues>
+                </expression>
+            </callExpressionSpecification>
+            """;
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -212,6 +230,9 @@ public class MatrixHandler implements HttpHandler {
         MatrixSettings settings = persistenceManager.getMatrixSettings();
         settings.setDirection(MatrixSettings.Direction.ROW_TO_COLUMN);
         settings.setShowElementsOption(MatrixSettings.RelationOption.ALL);
+        if (kind == MatrixKind.DEPENDENCY) {
+            settings.setDependencyCriteria(List.of(UML_DEPENDENCY_CRITERIA));
+        }
 
         FilterSettings rowSettings = persistenceManager.getRowSettings();
         FilterSettings columnSettings = persistenceManager.getColumnSettings();
@@ -494,7 +515,8 @@ public class MatrixHandler implements HttpHandler {
         REFINE("refine", "Refine Requirement Matrix", List.of("Block"), List.of("Requirement")),
         DERIVE("derive", "Derive Requirement Matrix", List.of("Requirement"), List.of("Requirement")),
         SATISFY("satisfy", "Satisfy Requirement Matrix", List.of("Block"), List.of("Requirement")),
-        ALLOCATION("allocation", "SysML Allocation Matrix", List.of("Block"), List.of("Block"));
+        ALLOCATION("allocation", "SysML Allocation Matrix", List.of("Block"), List.of("Block")),
+        DEPENDENCY("dependency", "Dependency Matrix", List.of("NamedElement"), List.of("NamedElement"));
 
         private final String apiName;
         private final String diagramType;
@@ -517,7 +539,7 @@ public class MatrixHandler implements HttpHandler {
             if (kind == null) {
                 throw new IllegalArgumentException(
                         "Unsupported matrix kind: " + rawValue
-                                + ". Supported: refine, derive, satisfy, allocation");
+                                + ". Supported: refine, derive, satisfy, allocation, dependency");
             }
             return kind;
         }
@@ -542,6 +564,9 @@ public class MatrixHandler implements HttpHandler {
                 case "systemallocationmatrix":
                 case "sysmlallocationmatrix":
                     return ALLOCATION;
+                case "dependency":
+                case "dependencymatrix":
+                    return DEPENDENCY;
                 default:
                     return null;
             }

@@ -2,7 +2,7 @@
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
 
-This lets Claude Code (or any MCP-compatible client) **query, create, modify, and visualize** SysML/UML models inside a running Cameo instance through 46 tools covering capability negotiation, methodology-aware OOSEM workflows, semantic validation, state-machine semantics, elements, relationships, native requirement matrices, diagrams, reusable verification, specifications, and Groovy macro execution.
+This lets Claude Code (or any MCP-compatible client) **query, create, modify, inspect, validate, and visualize** SysML/UML models inside a running Cameo instance through 162 tools covering capability negotiation, methodology-aware OOSEM workflows, semantic validation, state-machine semantics, elements, relationships, native matrices and tables, Relation Maps, reports, requirements import/export, validation suites, Teamwork/DataHub probes, diagrams, reusable verification, specifications, and guarded macro execution.
 
 ```
 Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (Cameo JVM)
@@ -42,16 +42,15 @@ This is the only open-source MCP server that integrates directly with a running 
                                                                |                         |
                                                                |  127.0.0.1:18740        |
                                                                |                         |
-                                                               |  Handlers:              |
-                                                               |  - ProjectHandler       |
-                                                               |  - ElementQueryHandler  |
-                                                               |  - ElementMutationHandler|
-                                                               |  - RelationshipHandler  |
-                                                               |  - MatrixHandler        |
-                                                               |  - DiagramHandler       |
-                                                               |  - ContainmentTreeHandler|
-                                                               |  - SpecificationHandler |
-                                                               |  - MacroHandler         |
+                                                               |  Handler families:      |
+                                                               |  - Project/elements     |
+                                                               |  - Relationships        |
+                                                               |  - Matrices/tables      |
+                                                               |  - Diagrams/RelationMap |
+                                                               |  - UI/snapshots/probes  |
+                                                               |  - Validation/reports   |
+                                                               |  - Import/export        |
+                                                               |  - Optional integrations|
                                                                +---------------------------+
                                                                          |
                                                                +---------v---------+
@@ -163,12 +162,14 @@ OOSEM workflows. These tools build named artifact recipes, workflow guidance,
 conformance checks, semantic validation, and compact review packets on top of
 the low-level bridge.
 
-## What's New In 2.0
+## What's New In 2.3.5
 
-- Structured state-machine semantics for transition triggers plus `entry` / `do` / `exit` behaviors
-- Python-side semantic validators for activity flow coherence, port/interface ownership, requirement quality, and cross-diagram traceability
-- New OOSEM recipe starters for logical activity flows, logical port BDDs, and logical IBD traceability views
-- Review packets that surface semantic findings alongside structural conformance and diagram evidence
+- Native Relation Map tools for create/configure, criteria templates, presentation inspection, graph readback, render/verify, snapshot diffing, and explicit refresh.
+- Live UI introspection tools for active diagram, browser selection, selected symbols, and raw diagram/presentation property dumps.
+- Probe-first route families for native validation, Report Wizard, requirements import/export, simulation, Teamwork, DataHub, variants, profiles, typed diagrams, and safety/cyber extensions.
+- JSON/CSV requirements import/export with dry-run defaults, explicit write gates, scoped export, and tests.
+- Native Report Wizard generation with template discovery and output-file receipts.
+- Safer long-running CATIA operations: request timeouts on the Python side and serialized write sessions on the Java side.
 
 ## Configuration
 
@@ -191,13 +192,16 @@ For local health checks, the plugin now responds on both `/api/v1/status` and th
 
 ## Tool Reference
 
-### Project & Session (6 tools)
+### Project, Session & UI (9 tools)
 
 | Tool | Description |
 |------|-------------|
 | `cameo_status` | Check plugin health and report client/plugin compatibility |
 | `cameo_get_capabilities` | Get machine-readable endpoint/capability metadata |
 | `cameo_probe_bridge` | Probe `/status` and `/api/v1/status` style endpoints and report the preferred local health paths |
+| `cameo_get_ui_state` | Inspect active project, active diagram, browser selection, and selected presentation elements |
+| `cameo_get_active_diagram` | Get the currently active CATIA Magic diagram |
+| `cameo_get_ui_selection` | Get selected browser elements and selected diagram presentation IDs |
 | `cameo_get_project` | Get project name, file path, and root model ID |
 | `cameo_save_project` | Save the project to disk |
 | `cameo_reset_session` | Force-close a stuck editing session (recovery tool) |
@@ -258,7 +262,7 @@ If you create a custom profile through MCP, the typical sequence is:
 
 `Connector` supports nested-port `partWithPort` ownership. `InformationFlow` and `ItemFlow` support structured `realizingConnector`, `conveyed`, and SysML `itemProperty` payload data for IBD item-flow workflows. When you pass an IBD context element as `ownerId`, the bridge resolves the actual `InformationFlow`/`ItemFlow` containment to the nearest package because Cameo does not allow those relationships to be owned directly by a block.
 
-### Matrices (4 tools)
+### Matrices & Generic Tables (8 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -266,20 +270,68 @@ If you create a custom profile through MCP, the typical sequence is:
 | `cameo_list_matrices` | List supported native matrix artifacts in the project |
 | `cameo_get_matrix` | Read one supported native matrix with rows, columns, and populated cells |
 | `cameo_create_matrix` | Create a supported native matrix artifact |
+| `cameo_list_generic_tables` | List native Generic Table artifacts |
+| `cameo_get_generic_table` | Read one Generic Table with row, column, and cell data |
+| `cameo_list_generic_table_columns` | Discover possible Generic Table columns for an element or type |
+| `cameo_create_generic_table` | Create and configure a native Generic Table artifact |
 
-**Supported matrix kinds:** `refine`, `derive`, `satisfy`, `allocation`
+**Supported matrix kinds:** `refine`, `derive`, `satisfy`, `allocation`, `dependency`
 
 These tools target Cameo's native matrix artifacts:
 - `refine` -> `Refine Requirement Matrix`
 - `derive` -> `Derive Requirement Matrix`
 - `satisfy` -> `Satisfy Requirement Matrix`
 - `allocation` -> `SysML Allocation Matrix`
+- `dependency` -> `Dependency Matrix`
 
 This matrix family is separate from the diagram shape/path API. It manages native matrix artifacts and returns row/column/cell data directly.
 
 `cameo_create_matrix` also accepts optional `row_types` and `column_types` lists so native matrix artifacts can be constrained to specific domains when the underlying matrix kind supports it. Use `cameo_list_matrix_kinds` to see the validated kind aliases and live-proven example type domains.
 
-### Diagrams (22 tools)
+### Relation Maps, Snapshots & Probes (22 tools)
+
+| Tool | Description |
+|------|-------------|
+| `cameo_list_relation_maps` | List native Relation Map artifacts in the project |
+| `cameo_get_relation_map` | Read one Relation Map with persisted graph settings |
+| `cameo_create_relation_map` | Create and configure a native Relation Map artifact |
+| `cameo_configure_relation_map` | Update native graph settings for an existing Relation Map |
+| `cameo_refresh_relation_map` | Explicitly request CATIA native Relation Map refresh with timeout evidence |
+| `cameo_dump_relation_map_raw_settings` | Dump raw `GraphSettings` getter evidence |
+| `cameo_list_relation_map_presentations` | Inspect Relation Map presentation elements and counts |
+| `cameo_list_relation_map_criteria_templates` | List bridge-known criteria templates captured from live UI evidence |
+| `cameo_set_relation_map_criteria` | Apply Relation Map dependency criteria with receipts |
+| `cameo_expand_relation_map` | Request native expansion and report reflected support/evidence |
+| `cameo_collapse_relation_map` | Request native collapse and report reflected support/evidence |
+| `cameo_render_relation_map` | Render/export Relation Map evidence without implicit refresh by default |
+| `cameo_verify_relation_map` | Verify graph and presentation evidence against caller-provided thresholds |
+| `cameo_compare_relation_maps` | Diff two Relation Maps structurally |
+| `cameo_get_traceability_graph` | Build a traceability graph from a Relation Map or model scope |
+| `cameo_create_snapshot` | Capture an in-memory evidence snapshot |
+| `cameo_list_snapshots` | List captured snapshots |
+| `cameo_get_snapshot` | Read a captured snapshot |
+| `cameo_delete_snapshot` | Delete a captured snapshot |
+| `cameo_diff_snapshots` | Diff two snapshots with bounded details |
+| `cameo_list_probe_templates` | List built-in read-only probe templates |
+| `cameo_execute_probe` | Execute a controlled probe or restricted Java-reflection readback |
+
+Relation Map native refresh can block CATIA's EDT on large maps. The bridge keeps refresh opt-in for create/configure/render/criteria/expand/collapse paths; call `cameo_refresh_relation_map` deliberately when you need native UI refresh behavior.
+
+### Advanced Native Surfaces (42 tools)
+
+| Family | Tools | Release status |
+|--------|-------|----------------|
+| Native validation | `cameo_get_validation_capabilities`, `cameo_list_validation_suites`, `cameo_run_native_validation`, `cameo_get_validation_result`, `cameo_run_validation` | Read-only/live-verified |
+| Report Wizard | `cameo_get_report_capabilities`, `cameo_list_report_templates`, `cameo_generate_report_preview`, `cameo_generate_report`, `cameo_get_report_job` | Generation requires preview, `allow_write=true`, and explicit output options |
+| Import/export and requirements | `cameo_get_import_export_capabilities`, `cameo_export_requirements`, `cameo_preview_requirements_import`, `cameo_apply_requirements_import`, `cameo_get_requirements_capabilities`, `cameo_export_requirements_preview`, `cameo_import_requirements_preview` | JSON/CSV live-verified; native ReqIF apply remains gated |
+| Simulation | `cameo_get_simulation_capabilities`, `cameo_list_simulation_configurations`, `cameo_run_simulation_preview`, `cameo_run_simulation`, `cameo_get_simulation_result`, `cameo_terminate_simulation` | Probe/preview-first; execution requires explicit allow flags |
+| Teamwork | `cameo_get_teamwork_capabilities`, `cameo_get_teamwork_project`, `cameo_preview_teamwork_commit`, `cameo_preview_teamwork_update`, `cameo_list_teamwork_descriptors`, `cameo_list_teamwork_branches`, `cameo_get_teamwork_history`, `cameo_get_teamwork_locks` | Read-only/probe-first |
+| DataHub | `cameo_get_datahub_capabilities`, `cameo_list_datahub_sources`, `cameo_preview_datahub_sync` | Preview-only; does not emit credentials |
+| Criteria/profile/variants/extensions/typed diagrams | Criteria builders, profile summaries/previews, variant previews, extension scans/refusals, typed-diagram inspection/previews | Probe-first with guarded writes |
+
+These route families intentionally fail closed when optional CATIA plugins, licenses, or live proof are missing. Preview/refusal payloads are part of the public contract, not placeholder errors.
+
+### Diagrams (24 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -303,10 +355,12 @@ This matrix family is separate from the diagram shape/path API. It manages nativ
 | `cameo_repair_label_positions` | Reset likely-overlapping path labels with dry-run receipts |
 | `cameo_repair_conveyed_item_labels` | Force conveyed-item/item-flow labels on eligible paths |
 | `cameo_normalize_compartment_presets` | Normalize compartment/full-port visibility by diagram type |
+| `cameo_prune_diagram_presentations` | Remove unwanted auto-displayed symbols while preserving requested presentations |
+| `cameo_prune_path_decorations` | Remove child path decorations such as association end labels |
 | `cameo_reparent_shapes` | Move existing presentation elements under new container shapes |
 | `cameo_route_paths` | Update path breakpoints, endpoints, and label reset behavior |
 
-**Validated diagram request tokens:** `Class`, `Package`, `UseCase`, `Activity`, `Sequence`, `StateMachine`, `Component`, `Deployment`, `CompositeStructure`, `Object`, `Communication`, `InteractionOverview`, `Timing`, `Profile`, `BDD`, `IBD`, `Requirement Diagram`, `Parametric Diagram`
+**Validated diagram request tokens:** `Class`, `Package`, `UseCase`, `Activity`, `Sequence`, `StateMachine`, `Component`, `Deployment`, `CompositeStructure`, `Object`, `Communication`, `InteractionOverview`, `Timing`, `Profile`, `BDD`, `IBD`, `Requirement Diagram`, `Parametric Diagram`, `RelationMap`, `Content Diagram`
 
 Use `cameo_list_diagram_types` if you want the accepted aliases too. Common forms such as `InternalBlockDiagram`, `SysML IBD`, `ClassDiagram`, and `StateMachineDiagram` are normalized to the validated token set automatically.
 
@@ -468,7 +522,8 @@ The bridge builds models correctly -- elements, relationships, directionality, s
 **Current direction:** Keep expanding structured editing for nested presentation elements so fewer workflows require macros.
 
 ### Not Yet Implemented
-- **Generic matrix/table artifact handler** -- native matrix support currently covers refine, derive, satisfy, and allocation matrices only
+- **Native ReqIF apply** -- bridge-owned JSON/CSV requirements import/export is live-verified; native ReqIF apply remains preview/refusal-only until a disposable ReqIF roundtrip is captured
+- **Optional-product writes** -- Teamwork, DataHub, simulation, variants, and safety/cyber extension families expose capability probes and safe previews first; writes require separate live proof
 - **Remove stereotype** -- can apply but not remove
 - **Delete/rename diagrams** -- diagrams can be created and populated but not deleted or renamed through the bridge
 - **Element reparenting** -- cannot move elements between packages
@@ -508,7 +563,7 @@ cameo-mcp-bridge/
     cameo_mcp/
       __init__.py
       client.py                        # HTTP client for the Java plugin
-server.py                        # MCP tool definitions (46 tools)
+      server.py                        # MCP tool definitions (162 tools)
       verification.py                  # reusable diagram/matrix verification helpers
       methodology/                     # Phase 2 pack registry + recipe runtime
         registry.py
@@ -525,7 +580,19 @@ server.py                        # MCP tool definitions (46 tools)
         ElementMutationHandler.java    # Create, modify, delete elements
         RelationshipHandler.java       # Create relationships
         MatrixHandler.java             # Native matrix artifacts
+        GenericTableHandler.java       # Native Generic Tables
         DiagramHandler.java            # Full diagram lifecycle
+        RelationMapHandler.java        # Relation Map graph/settings/rendering
+        UiStateHandler.java            # Active diagram and selection state
+        SnapshotHandler.java           # In-memory evidence snapshots
+        ValidationHandler.java         # Native validation suites
+        ReportWizardHandler.java       # Report Wizard templates/generation
+        ImportExportHandler.java       # Requirements import/export
+        CriteriaHandler.java           # Criteria expression helpers
+        TeamworkHandler.java           # Teamwork read-only probes
+        DataHubHandler.java            # DataHub capability/source probes
+        SimulationHandler.java         # Simulation preview/run facade
+        ExtensionProbeHandler.java     # Safety/cyber extension probes
         ContainmentTreeHandler.java    # Containment tree browsing
         SpecificationHandler.java      # Specification read/write
         MacroHandler.java              # Groovy script execution

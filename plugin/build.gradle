@@ -33,6 +33,7 @@ dependencies {
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.nomagic.magicdraw.foundation-*.jar'])
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.nomagic.magicdraw.core.diagram-*.jar'])
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.nomagic.magicdraw.modeling-*.jar'])
+    compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.nomagic.utils-*.jar'])
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['com.dassault_systemes.modeler.foundation-*.jar'])
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['common-*.jar'])
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['org.eclipse.emf.ecore-*.jar'])
@@ -41,6 +42,8 @@ dependencies {
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['gson-*.jar'])
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['cmof-*.jar'])
     compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.dependencymatrix/dependencymatrix_api.jar")
+    compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.diagramtable/diagramtable_api.jar")
+    compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.relationshipmap/relationshipmap_api.jar")
 
     testImplementation files("${cameoHome}/lib/junit-4.13.2.jar")
     testImplementation fileTree(dir: "${cameoHome}/lib", include: ['gson-*.jar'])
@@ -64,7 +67,7 @@ tasks.withType(Test).configureEach {
 
 jar {
     archiveBaseName = 'cameo-mcp-bridge'
-    archiveVersion = '2.3.4'
+    archiveVersion = '2.3.5'
     destinationDirectory = layout.buildDirectory.dir('libs')
 }
 
@@ -79,4 +82,11 @@ tasks.register('deploy', Copy) {
     dependsOn assemblePlugin
     from(layout.buildDirectory.dir('plugin-dist/com.claude.cameo.bridge'))
     into("${cameoHome}/plugins/com.claude.cameo.bridge")
+    doFirst {
+        delete fileTree(
+            dir: "${cameoHome}/plugins/com.claude.cameo.bridge",
+            include: 'cameo-mcp-bridge-*.jar',
+            exclude: jar.archiveFileName.get()
+        )
+    }
 }

@@ -1,14 +1,32 @@
 package com.claude.cameo.bridge;
 
 import com.claude.cameo.bridge.handlers.ContainmentTreeHandler;
+import com.claude.cameo.bridge.handlers.AdvancedCapabilityHandler;
+import com.claude.cameo.bridge.handlers.CriteriaHandler;
+import com.claude.cameo.bridge.handlers.DataHubHandler;
 import com.claude.cameo.bridge.handlers.DiagramHandler;
 import com.claude.cameo.bridge.handlers.ElementMutationHandler;
 import com.claude.cameo.bridge.handlers.ElementQueryHandler;
+import com.claude.cameo.bridge.handlers.ExtensionProbeHandler;
+import com.claude.cameo.bridge.handlers.GenericTableHandler;
+import com.claude.cameo.bridge.handlers.ImportExportHandler;
 import com.claude.cameo.bridge.handlers.MacroHandler;
 import com.claude.cameo.bridge.handlers.MatrixHandler;
+import com.claude.cameo.bridge.handlers.ProfileHandler;
 import com.claude.cameo.bridge.handlers.ProjectHandler;
+import com.claude.cameo.bridge.handlers.PropertyDumpHandler;
+import com.claude.cameo.bridge.handlers.RelationMapHandler;
 import com.claude.cameo.bridge.handlers.RelationshipHandler;
+import com.claude.cameo.bridge.handlers.ReportWizardHandler;
+import com.claude.cameo.bridge.handlers.ScriptProbeHandler;
+import com.claude.cameo.bridge.handlers.SimulationHandler;
+import com.claude.cameo.bridge.handlers.SnapshotHandler;
 import com.claude.cameo.bridge.handlers.SpecificationHandler;
+import com.claude.cameo.bridge.handlers.TeamworkHandler;
+import com.claude.cameo.bridge.handlers.TypedDiagramHandler;
+import com.claude.cameo.bridge.handlers.UiStateHandler;
+import com.claude.cameo.bridge.handlers.ValidationHandler;
+import com.claude.cameo.bridge.handlers.VariantHandler;
 import com.claude.cameo.bridge.util.BridgeCapabilities;
 import com.nomagic.magicdraw.core.Application;
 import com.nomagic.magicdraw.core.Project;
@@ -43,6 +61,8 @@ public class HttpBridgeServer {
         server.createContext("/api/v1/status", this::handleStatus);
         server.createContext("/api/v1/capabilities", this::handleCapabilities);
         server.createContext("/api/v1/project", new ProjectHandler());
+        server.createContext("/api/v1/ui", new UiStateHandler());
+        server.createContext("/api/v1/inspect/diagrams", new PropertyDumpHandler());
         server.createContext("/api/v1/containment-tree", new ContainmentTreeHandler());
         server.createContext("/api/v1/containment-tree/children", new ContainmentTreeHandler());
 
@@ -65,7 +85,24 @@ public class HttpBridgeServer {
 
         server.createContext("/api/v1/relationships", new RelationshipHandler());
         server.createContext("/api/v1/diagrams", new DiagramHandler());
+        server.createContext("/api/v1/relation-maps", new RelationMapHandler());
+        server.createContext("/api/v1/snapshots", new SnapshotHandler());
+        server.createContext("/api/v1/probes", new ScriptProbeHandler());
+        server.createContext("/api/v1/validation", new ValidationHandler());
         server.createContext("/api/v1/matrices", new MatrixHandler());
+        server.createContext("/api/v1/generic-tables", new GenericTableHandler());
+        AdvancedCapabilityHandler advancedCapabilityHandler = new AdvancedCapabilityHandler();
+        server.createContext("/api/v1/reports", new ReportWizardHandler());
+        server.createContext("/api/v1/import-export", new ImportExportHandler());
+        server.createContext("/api/v1/criteria", new CriteriaHandler());
+        server.createContext("/api/v1/profiles", new ProfileHandler());
+        server.createContext("/api/v1/typed-diagrams", new TypedDiagramHandler());
+        server.createContext("/api/v1/requirements", advancedCapabilityHandler);
+        server.createContext("/api/v1/simulation", new SimulationHandler());
+        server.createContext("/api/v1/teamwork", new TeamworkHandler());
+        server.createContext("/api/v1/datahub", new DataHubHandler());
+        server.createContext("/api/v1/variants", new VariantHandler());
+        server.createContext("/api/v1/extensions", new ExtensionProbeHandler());
         server.createContext("/api/v1/macros", new MacroHandler());
         server.createContext("/api/v1/session/reset", this::handleSessionReset);
     }

@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.3.5 - 2026-05-05
+
+Evidence-gathering release for native Relation Map debugging and UI-created settings inspection.
+
+### Added
+
+- UI state inspection endpoints and MCP tools for active diagram, selected elements, selected presentations, and browser selection context
+- Raw diagram, presentation, and Relation Map settings/property dump endpoints for before/after investigation
+- In-memory snapshot and JSON diff endpoints for capturing CATIA UI-created changes and comparing them against bridge-created state
+- Relation Map presentation listing and raw `GraphSettings` getter dumps to distinguish graph data, settings state, presentation state, and image export behavior
+- Relation Map criteria template discovery, criteria apply, compare, expand, collapse, render, and verify endpoints with machine-readable receipts
+- Controlled built-in probe templates for Relation Map, presentation, and UI-selection API discovery without enabling arbitrary script execution
+- Probe-first advanced route families for validation, Report Wizard, Requirements/ReqIF, Simulation, Teamwork, DataHub, variants, and safety/cyber extensions, with guarded preview/refusal MCP tools instead of hard optional-product dependencies
+- Native validation route family with suite discovery, bounded validation runs, cached result readback, Python MCP wrappers, and tests
+- Specific advanced handler surfaces for Report Wizard, import/export, simulation, Teamwork, DataHub, criteria templates, profiles/DSL previews, variant patterns, safety/cyber extension scans, and typed diagram inspection/write previews
+- Autopilot route-surface live validation script for smoke-testing the new route families after deploying the rebuilt plugin
+- Live validation scripts for UI introspection and Relation Map rendering regression evidence capture
+- A Relation Map UI introspection runbook for agent-led debugging workflows
+- Native Report Wizard generation through `GenerateTask`, including template discovery with classloader fallback and inline output-file proof receipts
+- JSON/CSV requirements import apply for explicit `dryRun=false`, `allowWrite=true` requests targeting a package, while keeping native ReqIF apply gated
+- Explicit `allowWrite=true` gating for Report Wizard file generation
+
+### Changed
+
+- Bumped the in-repo Python/plugin/methodology compatibility line to `2.3.5`
+- Hardened the Gradle `deploy` task so installed plugin directories do not accumulate stale `cameo-mcp-bridge-*.jar` versions across local deploys
+- Replaced generic criteria placeholder templates with the UI-verified Relation Map template subset where prior UI-diff evidence exists
+- Hardened Relation Map execution semantics after live CATIA validation showed native refresh can block the EDT for large maps:
+  - Relation Map render/export, criteria, expand, collapse, create, and configure paths no longer perform implicit native refresh by default
+  - Render/export uses an EDT read path without an undo session when no refresh/expand/layout mutation is requested
+  - Relation Map refresh remains available as an explicit operation with caller-provided timeout evidence
+  - CATIA write sessions are serialized so overlapping bridge writes fail clearly instead of colliding inside `SessionManager`
+
+### Fixed
+
+- Exposed standard UML `Parameter.direction` through the specification read/write route so Activity Parameter Node direction validation repairs do not require macro-only edits.
+- Fixed bridge-owned requirements export traversal so scoped JSON export walks owned elements recursively instead of relying on a broad type finder that missed newly imported disposable requirements.
+- Tightened bridge-owned requirements export filtering so packages or other elements with "requirement" in their names are not exported unless their metaclass/stereotype evidence is Requirement-like.
+
 ## 2.3.4 - 2026-04-20
 
 Patch release focused on diagram-presentation cleanup controls needed for live artifact export and review workflows.

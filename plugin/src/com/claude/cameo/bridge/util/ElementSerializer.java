@@ -4,7 +4,9 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Parameter;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
+import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ActivityParameterNode;
 import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.Connector;
 import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.ConnectorEnd;
 import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.ConnectableElement;
@@ -156,6 +158,7 @@ public class ElementSerializer {
         appendMultiplicityFields(json, element);
         appendPropertyLikeFields(json, element);
         appendPortLikeFields(json, element);
+        appendParameterLikeFields(json, element);
 
         if (element instanceof InformationFlow) {
             appendInformationFlowFields(json, (InformationFlow) element, false);
@@ -416,6 +419,22 @@ public class ElementSerializer {
                 invokeBooleanZeroArg(element, "isIsConjugated")));
         appendBooleanProperty(json, "isService", invokeBooleanZeroArg(element, "isService"));
         appendBooleanProperty(json, "isBehavior", invokeBooleanZeroArg(element, "isBehavior"));
+    }
+
+    private static void appendParameterLikeFields(JsonObject json, Element element) {
+        if (element instanceof Parameter) {
+            String direction = stringifyEnumLike(((Parameter) element).getDirection());
+            if (direction != null && !direction.isEmpty()) {
+                json.addProperty("direction", direction);
+            }
+        }
+
+        if (element instanceof ActivityParameterNode) {
+            Parameter parameter = ((ActivityParameterNode) element).getParameter();
+            if (parameter != null) {
+                json.add("parameter", toJsonReference(parameter));
+            }
+        }
     }
 
     private static void appendStereotypeNames(JsonObject json, Element element) {

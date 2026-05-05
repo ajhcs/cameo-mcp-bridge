@@ -15,7 +15,9 @@ from cameo_mcp.server import (
     cameo_detect_cross_diagram_inconsistencies,
     cameo_get_capabilities,
     cameo_get_diagram_image,
+    cameo_get_report_capabilities,
     cameo_export_required_diagrams,
+    cameo_run_validation,
     cameo_probe_bridge,
     cameo_list_diagram_types,
     cameo_list_diagram_shapes,
@@ -33,7 +35,11 @@ from cameo_mcp.server import (
     cameo_set_item_flow_label_presentation,
     cameo_set_transition_label_presentation,
     cameo_get_transition_triggers,
+    cameo_get_validation_capabilities,
+    cameo_get_validation_result,
+    cameo_list_validation_suites,
     mcp,
+    cameo_run_native_validation,
     cameo_set_state_behaviors,
     cameo_set_transition_trigger,
     cameo_validate_methodology_package,
@@ -105,7 +111,7 @@ class ToolSchemaAliasTests(unittest.TestCase):
 
 class ServerToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_cameo_get_capabilities_returns_native_dict(self) -> None:
-        payload = {"pluginVersion": "2.3.4", "compatibility": {"clientCompatible": True}}
+        payload = {"pluginVersion": "2.3.5", "compatibility": {"clientCompatible": True}}
 
         with patch(
             "cameo_mcp.server.client.get_capabilities",
@@ -127,6 +133,42 @@ class ServerToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result, payload)
         probe_bridge.assert_awaited_once_with()
+
+    async def test_cameo_get_report_capabilities_forwards_to_client(self) -> None:
+        payload = {"feature": "reports", "available": False}
+
+        with patch(
+            "cameo_mcp.server.client.get_report_capabilities",
+            new=AsyncMock(return_value=payload),
+        ) as get_report_capabilities:
+            result = await cameo_get_report_capabilities()
+
+        self.assertIs(result, payload)
+        get_report_capabilities.assert_awaited_once_with()
+
+    async def test_cameo_run_validation_forwards_bounded_options(self) -> None:
+        payload = {"dryRun": True}
+
+        with patch(
+            "cameo_mcp.server.client.run_validation",
+            new=AsyncMock(return_value=payload),
+        ) as run_validation:
+            result = await cameo_run_validation(
+                suite_id="suite-1",
+                scope_mode="elements",
+                scope_element_ids=["el-1"],
+                timeout_ms=12000,
+            )
+
+        self.assertIs(result, payload)
+        run_validation.assert_awaited_once_with(
+            suite_id="suite-1",
+            constraint_ids=None,
+            scope_mode="elements",
+            scope_element_ids=["el-1"],
+            min_severity=None,
+            timeout_ms=12000,
+        )
 
     async def test_cameo_create_element_forwards_typed_creation_fields(self) -> None:
         payload = {"created": True}
@@ -197,6 +239,67 @@ class ServerToolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result["matrixKinds"]), result["count"])
         self.assertGreater(result["count"], 0)
+
+    async def test_cameo_native_validation_tools_wrap_client(self) -> None:
+        payload = {"available": True}
+
+        with patch(
+            "cameo_mcp.server.client.get_validation_capabilities",
+            new=AsyncMock(return_value=payload),
+        ) as capabilities:
+            result = await cameo_get_validation_capabilities()
+
+        self.assertIs(result, payload)
+        capabilities.assert_awaited_once_with()
+
+        with patch(
+            "cameo_mcp.server.client.list_validation_suites",
+            new=AsyncMock(return_value={"suiteCount": 1}),
+        ) as suites:
+            result = await cameo_list_validation_suites()
+
+        self.assertEqual({"suiteCount": 1}, result)
+        suites.assert_awaited_once_with()
+
+        with patch(
+            "cameo_mcp.server.client.get_validation_result",
+            new=AsyncMock(return_value={"runId": "run-1"}),
+        ) as get_result:
+            result = await cameo_get_validation_result("run-1")
+
+        self.assertEqual({"runId": "run-1"}, result)
+        get_result.assert_awaited_once_with("run-1")
+
+    async def test_cameo_run_native_validation_wraps_client(self) -> None:
+        payload = {"runId": "run-1"}
+
+        with patch(
+            "cameo_mcp.server.client.run_native_validation",
+            new=AsyncMock(return_value=payload),
+        ) as run_validation:
+            result = await cameo_run_native_validation(
+                suite_id="suite-1",
+                scope_element_ids=["pkg-1"],
+                whole_project=False,
+                recursive=False,
+                exclude_read_only=False,
+                minimum_severity="warning",
+                open_native_window=True,
+                name="Review gate",
+            )
+
+        self.assertIs(result, payload)
+        run_validation.assert_awaited_once_with(
+            suite_id="suite-1",
+            constraint_ids=None,
+            scope_element_ids=["pkg-1"],
+            whole_project=False,
+            recursive=False,
+            exclude_read_only=False,
+            minimum_severity="warning",
+            open_native_window=True,
+            name="Review gate",
+        )
 
     async def test_cameo_get_diagram_image_can_omit_base64_payload(self) -> None:
         payload = {

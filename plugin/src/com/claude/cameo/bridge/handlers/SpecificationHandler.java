@@ -16,6 +16,9 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralUnlimitedNatural;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.MultiplicityElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.OpaqueExpression;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Parameter;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.ParameterDirectionKind;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.ParameterDirectionKindEnum;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Type;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.TypedElement;
@@ -26,6 +29,7 @@ import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.AggregationKindEnum;
 import com.nomagic.uml2.ext.magicdraw.compositestructures.mdports.Port;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
 import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
+import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ActivityParameterNode;
 import com.nomagic.uml2.ext.magicdraw.activities.mdintermediateactivities.ActivityPartition;
 import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
 import com.nomagic.uml2.impl.ElementsFactory;
@@ -75,10 +79,12 @@ public class SpecificationHandler implements HttpHandler {
         "upper",
         "isActive",
         "aggregation",
+        "direction",
         "isBehavior",
         "isConjugated",
         "isService",
         "represents",
+        "parameter",
         "type"
     };
 
@@ -585,7 +591,13 @@ public class SpecificationHandler implements HttpHandler {
                     return setTypedElementType(element, value, project);
 
                 case "direction":
+                    if (setParameterDirection(element, value)) {
+                        return true;
+                    }
                     return setFlowPropertyDirection(element, value, project);
+
+                case "parameter":
+                    return setActivityParameterNodeParameter(element, value, project);
 
                 case "lower":
                     return setMultiplicityBound(element, value, project, true);
@@ -806,6 +818,54 @@ public class SpecificationHandler implements HttpHandler {
                 flowPropertyStereo,
                 "direction",
                 TaggedValueCoercion.coerceForTag(project, flowPropertyStereo, "direction", value));
+        return true;
+    }
+
+    private boolean setParameterDirection(Element element, JsonElement value) {
+        if (!(element instanceof Parameter)) {
+            return false;
+        }
+        String raw = value.getAsString();
+        ParameterDirectionKind direction = parseParameterDirection(raw);
+        ((Parameter) element).setDirection(direction);
+        return true;
+    }
+
+    private ParameterDirectionKind parseParameterDirection(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase();
+        switch (normalized) {
+            case "in":
+            case "input":
+                return ParameterDirectionKindEnum.IN;
+            case "out":
+            case "output":
+                return ParameterDirectionKindEnum.OUT;
+            case "inout":
+            case "in-out":
+            case "in_out":
+            case "bidirectional":
+                return ParameterDirectionKindEnum.INOUT;
+            case "return":
+            case "result":
+                return ParameterDirectionKindEnum.RETURN;
+            default:
+                throw new IllegalArgumentException(
+                        "direction must be one of: in, out, inout, return");
+        }
+    }
+
+    private boolean setActivityParameterNodeParameter(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (!(element instanceof ActivityParameterNode)) {
+            return false;
+        }
+        Object coerced = coerceJsonValue(value, project);
+        if (!(coerced instanceof Parameter)) {
+            throw new IllegalArgumentException("parameter must reference a Parameter element by id");
+        }
+        ((ActivityParameterNode) element).setParameter((Parameter) coerced);
         return true;
     }
 

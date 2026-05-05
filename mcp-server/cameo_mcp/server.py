@@ -308,6 +308,36 @@ async def cameo_probe_bridge() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def cameo_get_ui_state(summary_only: bool = False) -> dict[str, Any]:
+    """Inspect live CATIA Magic UI context.
+
+    Use this after a human opens a diagram or selects symbols. It returns the
+    active project, active diagram, selected model elements, selected
+    presentations, browser selection, counts, and best-effort warnings for UI
+    APIs that are unavailable in the installed CATIA version.
+    """
+    result = await client.get_ui_state(summary_only=summary_only)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_active_diagram() -> dict[str, Any]:
+    """Get the currently active CATIA Magic diagram as a small payload."""
+    result = await client.get_active_diagram()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_ui_selection() -> dict[str, Any]:
+    """Get selected browser elements and selected diagram presentation IDs.
+
+    Use returned IDs as inputs to property dump tools.
+    """
+    result = await client.get_ui_selection()
+    return _mcp_result(result)
+
+
+@mcp.tool()
 async def cameo_list_methodology_packs() -> dict[str, Any]:
     """List built-in methodology packs available in the Phase 2 copilot layer.
 
@@ -1467,12 +1497,14 @@ async def cameo_create_matrix(
     - "derive" -> Derive Requirement Matrix
     - "satisfy" -> Satisfy Requirement Matrix
     - "allocation" -> SysML Allocation Matrix
+    - "dependency" -> Dependency Matrix
 
     The bridge configures the matrix to show all relevant rows/columns inside the
     selected scope so missing traceability remains visible.
 
     Args:
-        kind: Matrix kind: "refine", "derive", "satisfy", or "allocation".
+        kind: Matrix kind: "refine", "derive", "satisfy", "allocation", or
+              "dependency".
               Aliases such as "Refine Requirement Matrix",
               "Satisfy Requirement Matrix", and "System Allocation Matrix"
               are normalized automatically.
@@ -1502,6 +1534,1133 @@ async def cameo_create_matrix(
         column_scope_id=column_scope_id,
         row_types=row_types,
         column_types=column_types,
+    )
+    return _mcp_result(result)
+
+# -- Generic Tables -----------------------------------------------------------
+
+
+@mcp.tool()
+async def cameo_list_generic_tables() -> dict[str, Any]:
+    """List native Generic Table artifacts in the current project."""
+    result = await client.list_generic_tables()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_generic_table(table_id: str) -> dict[str, Any]:
+    """Get one native Generic Table with row, column, and cell data."""
+    result = await client.get_generic_table(table_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_generic_table_columns(
+    element_id: Optional[str] = None,
+    element_type: Optional[str] = None,
+) -> dict[str, Any]:
+    """List possible native Generic Table column ids for an element or type.
+
+    Args:
+        element_id: Optional basis element id, such as an existing Block.
+        element_type: Optional element type token, such as "Block".
+                     Provide element_id or element_type.
+    """
+    result = await client.list_generic_table_columns(
+        element_id=element_id,
+        element_type=element_type,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_create_generic_table(
+    parent_id: str,
+    name: Optional[str] = None,
+    element_types: Optional[list[str]] = None,
+    scope_ids: Optional[list[str]] = None,
+    row_element_ids: Optional[list[str]] = None,
+    column_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Create and configure a native Generic Table artifact.
+
+    Args:
+        parent_id: Namespace/package ID that will own the table.
+        name: Optional display name.
+        element_types: Optional native table element types, such as ["Block"].
+        scope_ids: Optional table scope element IDs.
+        row_element_ids: Optional explicit row element IDs.
+        column_ids: Optional Generic Table column IDs to display.
+    """
+    result = await client.create_generic_table(
+        parent_id=parent_id,
+        name=name,
+        element_types=element_types,
+        scope_ids=scope_ids,
+        row_element_ids=row_element_ids,
+        column_ids=column_ids,
+    )
+    return _mcp_result(result)
+
+# -- Relation Maps ------------------------------------------------------------
+
+
+@mcp.tool()
+async def cameo_list_relation_maps() -> dict[str, Any]:
+    """List native Relation Map artifacts in the current project."""
+    result = await client.list_relation_maps()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_relation_map(relation_map_id: str) -> dict[str, Any]:
+    """Get one native Relation Map with persisted graph settings.
+
+    Args:
+        relation_map_id: ID of the Relation Map diagram element.
+    """
+    result = await client.get_relation_map(relation_map_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_create_relation_map(
+    parent_id: str,
+    name: Optional[str] = None,
+    context_element_id: Optional[str] = None,
+    scope_ids: Optional[list[str]] = None,
+    element_type_ids: Optional[list[str]] = None,
+    dependency_criteria: Optional[list[str]] = None,
+    depth: Optional[int] = None,
+    layout: Optional[str] = None,
+    legend_enabled: Optional[bool] = None,
+    show_full_types: Optional[bool] = None,
+    show_stereotypes: Optional[bool] = None,
+    show_parameters: Optional[bool] = None,
+    show_element_numbers: Optional[bool] = None,
+    single_node_per_element: Optional[bool] = None,
+    short_node_names: Optional[bool] = None,
+    types_include_subtypes: Optional[bool] = None,
+    types_include_custom_types: Optional[bool] = None,
+    make_element_as_context: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Create and configure a native Relation Map artifact.
+
+    Prefer this over `cameo_create_diagram(type="RelationMap")` when the map
+    must render relationships. It writes Cameo's native graph settings:
+    context element, scope roots, optional element-type filters, dependency
+    criteria, depth, layout, and display flags.
+
+    Args:
+        parent_id: Namespace/package ID that will own the Relation Map.
+        name: Optional display name.
+        context_element_id: Optional root/context model element ID.
+        scope_ids: Optional scope root element IDs.
+        element_type_ids: Optional element/metaclass/stereotype IDs used as
+            relation-map type filters.
+        dependency_criteria: Optional raw Cameo relation-map criterion IDs.
+        depth: Optional traversal depth. Use Cameo's native value semantics.
+        layout: Optional native relation-map layout token.
+        legend_enabled: Whether to show the legend.
+        show_full_types: Whether to show fully qualified type names.
+        show_stereotypes: Whether to show stereotypes.
+        show_parameters: Whether to show parameters.
+        show_element_numbers: Whether to show element numbers.
+        single_node_per_element: Whether repeated appearances collapse to one
+            node per element.
+        short_node_names: Whether to shorten displayed node names.
+        types_include_subtypes: Whether type filters include subtypes.
+        types_include_custom_types: Whether type filters include custom types.
+        make_element_as_context: Whether the context element is also shown as
+            the map context node.
+    """
+    result = await client.create_relation_map(
+        parent_id=parent_id,
+        name=name,
+        context_element_id=context_element_id,
+        scope_ids=scope_ids,
+        element_type_ids=element_type_ids,
+        dependency_criteria=dependency_criteria,
+        depth=depth,
+        layout=layout,
+        legend_enabled=legend_enabled,
+        show_full_types=show_full_types,
+        show_stereotypes=show_stereotypes,
+        show_parameters=show_parameters,
+        show_element_numbers=show_element_numbers,
+        single_node_per_element=single_node_per_element,
+        short_node_names=short_node_names,
+        types_include_subtypes=types_include_subtypes,
+        types_include_custom_types=types_include_custom_types,
+        make_element_as_context=make_element_as_context,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_configure_relation_map(
+    relation_map_id: str,
+    context_element_id: Optional[str] = None,
+    scope_ids: Optional[list[str]] = None,
+    element_type_ids: Optional[list[str]] = None,
+    dependency_criteria: Optional[list[str]] = None,
+    depth: Optional[int] = None,
+    layout: Optional[str] = None,
+    legend_enabled: Optional[bool] = None,
+    show_full_types: Optional[bool] = None,
+    show_stereotypes: Optional[bool] = None,
+    show_parameters: Optional[bool] = None,
+    show_element_numbers: Optional[bool] = None,
+    single_node_per_element: Optional[bool] = None,
+    short_node_names: Optional[bool] = None,
+    types_include_subtypes: Optional[bool] = None,
+    types_include_custom_types: Optional[bool] = None,
+    make_element_as_context: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Update native graph settings for an existing Relation Map."""
+    result = await client.configure_relation_map(
+        relation_map_id=relation_map_id,
+        context_element_id=context_element_id,
+        scope_ids=scope_ids,
+        element_type_ids=element_type_ids,
+        dependency_criteria=dependency_criteria,
+        depth=depth,
+        layout=layout,
+        legend_enabled=legend_enabled,
+        show_full_types=show_full_types,
+        show_stereotypes=show_stereotypes,
+        show_parameters=show_parameters,
+        show_element_numbers=show_element_numbers,
+        single_node_per_element=single_node_per_element,
+        short_node_names=short_node_names,
+        types_include_subtypes=types_include_subtypes,
+        types_include_custom_types=types_include_custom_types,
+        make_element_as_context=make_element_as_context,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_refresh_relation_map(relation_map_id: str, timeout: float = 120.0) -> dict[str, Any]:
+    """Refresh a native Relation Map after model or settings changes.
+
+    Args:
+        relation_map_id: ID of the Relation Map diagram element.
+        timeout: HTTP and bridge-side timeout in seconds.
+    """
+    result = await client.refresh_relation_map(relation_map_id, timeout=timeout)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_dump_relation_map_raw_settings(
+    relation_map_id: str,
+    include_raw: bool = False,
+    summary_only: bool = False,
+) -> dict[str, Any]:
+    """Dump native Relation Map settings for UI-diff investigation.
+
+    Use before and after a human changes a Relation Map in CATIA Magic. The
+    result includes sanitized settings plus reflected GraphSettings getters.
+    Set include_raw only when class names/string values are needed.
+    """
+    result = await client.get_relation_map_raw_settings(
+        relation_map_id=relation_map_id,
+        include_raw=include_raw,
+        summary_only=summary_only,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_relation_map_presentations(
+    relation_map_id: str,
+    include_properties: bool = False,
+    include_raw: bool = False,
+    summary_only: bool = True,
+    limit: int = 250,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List loaded Relation Map presentation nodes, paths, and legend elements.
+
+    Use this to distinguish graph traversal success from rendered relation-map
+    expansion/export failure. Large property dumps are paged and default to
+    summaries.
+    """
+    result = await client.get_relation_map_presentations(
+        relation_map_id=relation_map_id,
+        include_properties=include_properties,
+        include_raw=include_raw,
+        summary_only=summary_only,
+        limit=limit,
+        offset=offset,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_relation_map_criteria_templates() -> dict[str, Any]:
+    """List built-in Relation Map criteria templates.
+
+    Templates marked verifiedWithUiDiff=false are placeholders until a snapshot
+    diff from CATIA Magic's UI confirms the exact native expression.
+    """
+    result = await client.list_relation_map_criteria_templates()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_set_relation_map_criteria(
+    relation_map_id: str,
+    mode: str = "replace",
+    criteria: Optional[list[dict[str, Any] | str]] = None,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Apply Relation Map criteria using templates or raw UI-derived expressions."""
+    result = await client.set_relation_map_criteria(
+        relation_map_id=relation_map_id,
+        mode=mode,
+        criteria=criteria,
+        refresh=refresh,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_expand_relation_map(
+    relation_map_id: str,
+    mode: str = "all",
+    element_ids: Optional[list[str]] = None,
+    depth: Optional[int] = None,
+    refresh: bool = False,
+    layout: Optional[str] = None,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Try to expand native Relation Map nodes and report before/after counts."""
+    result = await client.expand_relation_map(
+        relation_map_id=relation_map_id,
+        mode=mode,
+        element_ids=element_ids,
+        depth=depth,
+        refresh=refresh,
+        layout=layout,
+        timeout=timeout,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_collapse_relation_map(
+    relation_map_id: str,
+    mode: str = "all",
+    element_ids: Optional[list[str]] = None,
+    refresh: bool = False,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Try to collapse native Relation Map nodes and report before/after counts."""
+    result = await client.collapse_relation_map(
+        relation_map_id=relation_map_id,
+        mode=mode,
+        element_ids=element_ids,
+        refresh=refresh,
+        timeout=timeout,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_render_relation_map(
+    relation_map_id: str,
+    refresh: bool = False,
+    expand: str = "none",
+    depth: Optional[int] = None,
+    layout: Optional[str] = None,
+    scale_percentage: int = 200,
+    include_image: bool = True,
+    include_presentation_summary: bool = True,
+) -> dict[str, Any]:
+    """Render/export a Relation Map image; native refresh is opt-in because it can block CATIA."""
+    result = await client.render_relation_map(
+        relation_map_id=relation_map_id,
+        refresh=refresh,
+        expand=expand,
+        depth=depth,
+        layout=layout,
+        scale_percentage=scale_percentage,
+        include_image=include_image,
+        include_presentation_summary=include_presentation_summary,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_verify_relation_map(
+    relation_map_id: str,
+    expected_min_nodes: int = 0,
+    expected_min_edges: int = 0,
+    expected_rendered_nodes: int = 0,
+    relationship_types: Optional[list[str]] = None,
+    max_depth: int = 3,
+) -> dict[str, Any]:
+    """Verify graph traversal, native settings validity, and rendered count separately."""
+    result = await client.verify_relation_map(
+        relation_map_id=relation_map_id,
+        expected_min_nodes=expected_min_nodes,
+        expected_min_edges=expected_min_edges,
+        expected_rendered_nodes=expected_rendered_nodes,
+        relationship_types=relationship_types,
+        max_depth=max_depth,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_compare_relation_maps(
+    left_relation_map_id: str,
+    right_relation_map_id: str,
+    include_presentations: bool = True,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    """Compare two Relation Maps, usually a UI-created map and a bridge-created map."""
+    result = await client.compare_relation_maps(
+        left_relation_map_id=left_relation_map_id,
+        right_relation_map_id=right_relation_map_id,
+        include_presentations=include_presentations,
+        include_raw=include_raw,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_create_snapshot(
+    target_type: str,
+    target_id: Optional[str] = None,
+    name: Optional[str] = None,
+    include_raw: bool = False,
+    include_presentations: Optional[bool] = None,
+    include_properties: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Capture an in-memory inspection snapshot for before/after UI diffs.
+
+    target_type may be project, element, diagram, relationMap, or ui. For
+    diagram/relationMap snapshots, presentation summaries are included by
+    default so UI expansion changes can be diffed.
+    """
+    result = await client.create_snapshot(
+        target_type=target_type,
+        target_id=target_id,
+        name=name,
+        include_raw=include_raw,
+        include_presentations=include_presentations,
+        include_properties=include_properties,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_snapshots() -> dict[str, Any]:
+    """List in-memory bridge snapshots available for diffing."""
+    result = await client.list_snapshots()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_snapshot(snapshot_id: str) -> dict[str, Any]:
+    """Get one in-memory bridge snapshot payload."""
+    result = await client.get_snapshot(snapshot_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_delete_snapshot(snapshot_id: str) -> dict[str, Any]:
+    """Delete an in-memory snapshot without changing the CATIA model."""
+    result = await client.delete_snapshot(snapshot_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_diff_snapshots(
+    before_snapshot_id: str,
+    after_snapshot_id: str,
+    ignore_paths: Optional[list[str]] = None,
+    include_details: bool = True,
+    max_changes: int = 500,
+) -> dict[str, Any]:
+    """Diff two snapshots to reveal what CATIA Magic UI actions changed."""
+    result = await client.diff_snapshots(
+        before_snapshot_id=before_snapshot_id,
+        after_snapshot_id=after_snapshot_id,
+        ignore_paths=ignore_paths,
+        include_details=include_details,
+        max_changes=max_changes,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_validation_capabilities() -> dict[str, Any]:
+    """Probe whether CATIA native validation APIs are available through the bridge."""
+    result = await client.get_validation_capabilities()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_validation_suites() -> dict[str, Any]:
+    """List candidate native validation suites and constraints in the open project."""
+    result = await client.list_validation_suites()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_run_native_validation(
+    suite_id: Optional[str] = None,
+    constraint_ids: Optional[list[str]] = None,
+    scope_element_ids: Optional[list[str]] = None,
+    whole_project: Optional[bool] = None,
+    recursive: bool = True,
+    exclude_read_only: bool = True,
+    minimum_severity: Optional[str] = None,
+    open_native_window: bool = False,
+    name: Optional[str] = None,
+) -> dict[str, Any]:
+    """Run CATIA native validation for a suite or explicit constraint IDs.
+
+    Provide either suite_id or constraint_ids. Use scope_element_ids with
+    whole_project=false for bounded validation runs.
+    """
+    result = await client.run_native_validation(
+        suite_id=suite_id,
+        constraint_ids=constraint_ids,
+        scope_element_ids=scope_element_ids,
+        whole_project=whole_project,
+        recursive=recursive,
+        exclude_read_only=exclude_read_only,
+        minimum_severity=minimum_severity,
+        open_native_window=open_native_window,
+        name=name,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_get_validation_result(run_id: str) -> dict[str, Any]:
+    """Fetch a cached CATIA native validation run result by run ID."""
+    result = await client.get_validation_result(run_id)
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_list_probe_templates() -> dict[str, Any]:
+    """List safe built-in CATIA API discovery probes."""
+    result = await client.list_probe_templates()
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_execute_probe(
+    template: Optional[str] = None,
+    mode: str = "read",
+    script: Optional[str] = None,
+    language: str = "javaReflection",
+    timeout_ms: int = 5000,
+    requires_project: bool = True,
+    description: Optional[str] = None,
+    operation: Optional[str] = None,
+    class_name: Optional[str] = None,
+    method_name: Optional[str] = None,
+    relation_map_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Execute a controlled discovery probe.
+
+    Built-in templates are supported. Arbitrary scripts are intentionally
+    refused by the Java bridge unless a safer execution engine is added later.
+    """
+    result = await client.execute_probe(
+        template=template,
+        mode=mode,
+        script=script,
+        language=language,
+        timeout_ms=timeout_ms,
+        requires_project=requires_project,
+        description=description,
+        operation=operation,
+        class_name=class_name,
+        method_name=method_name,
+        relation_map_id=relation_map_id,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_run_validation(
+    suite_id: Optional[str] = None,
+    constraint_ids: Optional[list[str]] = None,
+    scope_mode: str = "project",
+    scope_element_ids: Optional[list[str]] = None,
+    min_severity: Optional[str] = None,
+    timeout_ms: int = 30000,
+) -> dict[str, Any]:
+    """Run or preview bounded native Cameo validation."""
+    return _mcp_result(await client.run_validation(
+        suite_id=suite_id,
+        constraint_ids=constraint_ids,
+        scope_mode=scope_mode,
+        scope_element_ids=scope_element_ids,
+        min_severity=min_severity,
+        timeout_ms=timeout_ms,
+    ))
+
+
+@mcp.tool()
+async def cameo_get_report_capabilities() -> dict[str, Any]:
+    """Probe Report Wizard API availability and plugin evidence."""
+    return _mcp_result(await client.get_report_capabilities())
+
+
+@mcp.tool()
+async def cameo_list_report_templates() -> dict[str, Any]:
+    """List Report Wizard templates when native readback is promoted."""
+    return _mcp_result(await client.list_report_templates())
+
+
+@mcp.tool()
+async def cameo_generate_report_preview(
+    template_id: Optional[str] = None,
+    template_name: Optional[str] = None,
+    report_name: Optional[str] = None,
+    output_path: Optional[str] = None,
+    output_format: Optional[str] = None,
+    scope_element_ids: Optional[list[str]] = None,
+    recursive: Optional[bool] = None,
+    parameters: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Preview a guarded Report Wizard generation request."""
+    return _mcp_result(await client.generate_report_preview(
+        template_id=template_id,
+        template_name=template_name,
+        report_name=report_name,
+        output_path=output_path,
+        output_format=output_format,
+        scope_element_ids=scope_element_ids,
+        recursive=recursive,
+        parameters=parameters,
+    ))
+
+
+@mcp.tool()
+async def cameo_generate_report(
+    template_id: Optional[str] = None,
+    template_name: Optional[str] = None,
+    report_name: Optional[str] = None,
+    output_path: Optional[str] = None,
+    output_format: Optional[str] = None,
+    scope_element_ids: Optional[list[str]] = None,
+    recursive: Optional[bool] = None,
+    display_in_viewer: Optional[bool] = None,
+    parameters: Optional[dict[str, Any]] = None,
+    allow_write: bool = False,
+) -> dict[str, Any]:
+    """Generate a Report Wizard artifact from a real native template."""
+    return _mcp_result(await client.generate_report(
+        template_id=template_id,
+        template_name=template_name,
+        report_name=report_name,
+        output_path=output_path,
+        output_format=output_format,
+        scope_element_ids=scope_element_ids,
+        recursive=recursive,
+        display_in_viewer=display_in_viewer,
+        parameters=parameters,
+        allow_write=allow_write,
+    ))
+
+
+@mcp.tool()
+async def cameo_get_report_job(job_id: str) -> dict[str, Any]:
+    """Fetch a Report Wizard generation job status."""
+    return _mcp_result(await client.get_report_job(job_id))
+
+
+@mcp.tool()
+async def cameo_get_requirements_capabilities() -> dict[str, Any]:
+    """Probe Requirements/ReqIF API availability and plugin evidence."""
+    return _mcp_result(await client.get_requirements_capabilities())
+
+
+@mcp.tool()
+async def cameo_get_import_export_capabilities() -> dict[str, Any]:
+    """Probe bridge-owned CSV/JSON and native ReqIF import/export support."""
+    return _mcp_result(await client.get_import_export_capabilities())
+
+
+@mcp.tool()
+async def cameo_export_requirements(
+    scope_ids: Optional[list[str]] = None,
+    root_id: Optional[str] = None,
+    package_id: Optional[str] = None,
+    format: str = "json",
+    output_path: Optional[str] = None,
+    limit: int = 1000,
+) -> dict[str, Any]:
+    """Export requirement-like elements through the import/export route."""
+    return _mcp_result(await client.export_requirements(
+        scope_ids=scope_ids,
+        root_id=root_id,
+        package_id=package_id,
+        format=format,
+        output_path=output_path,
+        limit=limit,
+    ))
+
+
+@mcp.tool()
+async def cameo_preview_requirements_import(
+    source_path: Optional[str] = None,
+    source_rows: Optional[list[dict[str, Any]]] = None,
+    requirements: Optional[list[dict[str, Any]]] = None,
+    csv_text: Optional[str] = None,
+    target_package_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview requirements import through the import/export route."""
+    return _mcp_result(await client.preview_requirements_import(
+        source_path=source_path,
+        source_rows=source_rows,
+        requirements=requirements,
+        csv_text=csv_text,
+        target_package_id=target_package_id,
+    ))
+
+
+@mcp.tool()
+async def cameo_apply_requirements_import(
+    patch_plan: Optional[dict[str, Any]] = None,
+    target_package_id: Optional[str] = None,
+    requirements: Optional[list[dict[str, Any]]] = None,
+    rows: Optional[list[dict[str, Any]]] = None,
+    csv_text: Optional[str] = None,
+    format: str = "json",
+    dry_run: bool = True,
+    allow_write: bool = False,
+) -> dict[str, Any]:
+    """Apply or dry-run a reviewed requirements import request."""
+    return _mcp_result(await client.apply_requirements_import(
+        patch_plan=patch_plan,
+        target_package_id=target_package_id,
+        requirements=requirements,
+        rows=rows,
+        csv_text=csv_text,
+        format=format,
+        dry_run=dry_run,
+        allow_write=allow_write,
+    ))
+
+
+@mcp.tool()
+async def cameo_export_requirements_preview(
+    scope_ids: Optional[list[str]] = None,
+    format: str = "csv",
+    output_path: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview requirement export without mutating the model."""
+    return _mcp_result(await client.export_requirements_preview(
+        scope_ids=scope_ids,
+        format=format,
+        output_path=output_path,
+    ))
+
+
+@mcp.tool()
+async def cameo_import_requirements_preview(
+    source_path: Optional[str] = None,
+    source_rows: Optional[list[dict[str, Any]]] = None,
+    target_package_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview requirement import/diff without writes."""
+    return _mcp_result(await client.import_requirements_preview(
+        source_path=source_path,
+        source_rows=source_rows,
+        target_package_id=target_package_id,
+    ))
+
+
+@mcp.tool()
+async def cameo_get_simulation_capabilities() -> dict[str, Any]:
+    """Probe Simulation Toolkit availability."""
+    return _mcp_result(await client.get_simulation_capabilities())
+
+
+@mcp.tool()
+async def cameo_list_simulation_configurations() -> dict[str, Any]:
+    """List simulation configurations when native readback is promoted."""
+    return _mcp_result(await client.list_simulation_configurations())
+
+
+@mcp.tool()
+async def cameo_run_simulation_preview(
+    configuration_id: Optional[str] = None,
+    timeout_ms: int = 30000,
+) -> dict[str, Any]:
+    """Preview a bounded simulation run request."""
+    return _mcp_result(await client.run_simulation_preview(
+        configuration_id=configuration_id,
+        timeout_ms=timeout_ms,
+    ))
+
+
+@mcp.tool()
+async def cameo_run_simulation(
+    configuration_id: Optional[str] = None,
+    target_id: Optional[str] = None,
+    timeout_ms: int = 30000,
+    allow_execute: bool = False,
+    async_run: bool = False,
+) -> dict[str, Any]:
+    """Call the guarded simulation run endpoint."""
+    return _mcp_result(await client.run_simulation(
+        configuration_id=configuration_id,
+        target_id=target_id,
+        timeout_ms=timeout_ms,
+        allow_execute=allow_execute,
+        async_run=async_run,
+    ))
+
+
+@mcp.tool()
+async def cameo_get_simulation_result(run_id: str) -> dict[str, Any]:
+    """Fetch simulation result status."""
+    return _mcp_result(await client.get_simulation_result(run_id))
+
+
+@mcp.tool()
+async def cameo_terminate_simulation(run_id: str) -> dict[str, Any]:
+    """Terminate an active simulation job when execution support is enabled."""
+    return _mcp_result(await client.terminate_simulation(run_id))
+
+
+@mcp.tool()
+async def cameo_get_teamwork_capabilities() -> dict[str, Any]:
+    """Probe Teamwork/Magic Collaboration Studio API availability."""
+    return _mcp_result(await client.get_teamwork_capabilities())
+
+
+@mcp.tool()
+async def cameo_get_teamwork_project() -> dict[str, Any]:
+    """Read Teamwork project metadata when native readback is promoted."""
+    return _mcp_result(await client.get_teamwork_project())
+
+
+@mcp.tool()
+async def cameo_preview_teamwork_commit(message: Optional[str] = None) -> dict[str, Any]:
+    """Preview a Teamwork commit without changing the server project."""
+    return _mcp_result(await client.preview_teamwork_commit(message=message))
+
+
+@mcp.tool()
+async def cameo_preview_teamwork_update(message: Optional[str] = None) -> dict[str, Any]:
+    """Preview a Teamwork update without changing the server project."""
+    return _mcp_result(await client.preview_teamwork_update(message=message))
+
+
+@mcp.tool()
+async def cameo_list_teamwork_descriptors() -> dict[str, Any]:
+    """List Teamwork descriptors when the native client is authenticated."""
+    return _mcp_result(await client.list_teamwork_descriptors())
+
+
+@mcp.tool()
+async def cameo_list_teamwork_branches() -> dict[str, Any]:
+    """List Teamwork branches when available."""
+    return _mcp_result(await client.list_teamwork_branches())
+
+
+@mcp.tool()
+async def cameo_get_teamwork_history() -> dict[str, Any]:
+    """Read Teamwork history diagnostics when available."""
+    return _mcp_result(await client.get_teamwork_history())
+
+
+@mcp.tool()
+async def cameo_get_teamwork_locks() -> dict[str, Any]:
+    """Read Teamwork lock diagnostics when available."""
+    return _mcp_result(await client.get_teamwork_locks())
+
+
+@mcp.tool()
+async def cameo_get_datahub_capabilities() -> dict[str, Any]:
+    """Probe DataHub/DOORS integration availability."""
+    return _mcp_result(await client.get_datahub_capabilities())
+
+
+@mcp.tool()
+async def cameo_list_datahub_sources() -> dict[str, Any]:
+    """List DataHub sources when native readback is promoted."""
+    return _mcp_result(await client.list_datahub_sources())
+
+
+@mcp.tool()
+async def cameo_preview_datahub_sync(
+    source_id: Optional[str] = None,
+    scope_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview DataHub sync without writing to CATIA or external systems."""
+    return _mcp_result(await client.preview_datahub_sync(source_id=source_id, scope_id=scope_id))
+
+
+@mcp.tool()
+async def cameo_get_criteria_capabilities() -> dict[str, Any]:
+    """Probe generic criteria expression support."""
+    return _mcp_result(await client.get_criteria_capabilities())
+
+
+@mcp.tool()
+async def cameo_list_criteria_templates(target: Optional[str] = None) -> dict[str, Any]:
+    """List criteria templates for relation maps, matrices, tables, or legends."""
+    return _mcp_result(await client.list_criteria_templates(target=target))
+
+
+@mcp.tool()
+async def cameo_build_criteria_expression(
+    relationship_kind: Optional[str] = None,
+    direction: str = "both",
+    target: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build a bridge-owned criteria expression preview."""
+    return _mcp_result(await client.build_criteria_expression(
+        relationship_kind=relationship_kind,
+        direction=direction,
+        target=target,
+    ))
+
+
+@mcp.tool()
+async def cameo_parse_criteria_expression(expression: dict[str, Any] | str) -> dict[str, Any]:
+    """Parse a criteria expression into a diagnostic payload."""
+    return _mcp_result(await client.parse_criteria_expression(expression))
+
+
+@mcp.tool()
+async def cameo_apply_criteria_template(
+    target_id: str,
+    template_id: Optional[str] = None,
+    expression: Optional[dict[str, Any]] = None,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Apply a criteria template after UI-diff verification."""
+    return _mcp_result(await client.apply_criteria_template(
+        target_id=target_id,
+        template_id=template_id,
+        expression=expression,
+        refresh=refresh,
+    ))
+
+
+@mcp.tool()
+async def cameo_capture_criteria_template_from_diff(
+    before_snapshot_id: str,
+    after_snapshot_id: str,
+    target_kind: Optional[str] = None,
+) -> dict[str, Any]:
+    """Capture a native criteria template from before/after snapshot evidence."""
+    return _mcp_result(await client.capture_criteria_template_from_diff(
+        before_snapshot_id=before_snapshot_id,
+        after_snapshot_id=after_snapshot_id,
+        target_kind=target_kind,
+    ))
+
+
+@mcp.tool()
+async def cameo_get_profile_capabilities() -> dict[str, Any]:
+    """Probe profile/DSL authoring support."""
+    return _mcp_result(await client.get_profile_capabilities())
+
+
+@mcp.tool()
+async def cameo_export_profile_summary() -> dict[str, Any]:
+    """Export a summary of profile and stereotype elements in the open project."""
+    return _mcp_result(await client.export_profile_summary())
+
+
+@mcp.tool()
+async def cameo_preview_profile_operation(
+    operation: str,
+    payload: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Preview a profile operation such as create-profile, create-stereotype, create-tag, apply-profile, or set-tags."""
+    return _mcp_result(await client.preview_profile_operation(operation=operation, payload=payload))
+
+
+@mcp.tool()
+async def cameo_get_variant_capabilities() -> dict[str, Any]:
+    """Probe native or bridge-owned variant support."""
+    return _mcp_result(await client.get_variant_capabilities())
+
+
+@mcp.tool()
+async def cameo_analyze_variants_preview(
+    configuration_ids: Optional[list[str]] = None,
+    scope_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Preview variant/product-line analysis without writes."""
+    return _mcp_result(await client.analyze_variants_preview(
+        configuration_ids=configuration_ids,
+        scope_ids=scope_ids,
+    ))
+
+
+@mcp.tool()
+async def cameo_install_variant_pattern_preview(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Preview installing bridge-owned variant stereotypes."""
+    return _mcp_result(await client.install_variant_pattern_preview(payload=payload))
+
+
+@mcp.tool()
+async def cameo_export_variant_configuration(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Preview exporting a bridge-owned variant configuration evidence payload."""
+    return _mcp_result(await client.export_variant_configuration(payload=payload))
+
+
+@mcp.tool()
+async def cameo_get_extension_capabilities() -> dict[str, Any]:
+    """Probe safety/cyber extension availability."""
+    return _mcp_result(await client.get_extension_capabilities())
+
+
+@mcp.tool()
+async def cameo_scan_extensions(
+    targets: Optional[list[str]] = None,
+    scope_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Preview a read-only safety/cyber extension model scan."""
+    return _mcp_result(await client.scan_extensions(targets=targets, scope_id=scope_id))
+
+
+@mcp.tool()
+async def cameo_list_extension_profiles() -> dict[str, Any]:
+    """List extension-related profiles and stereotypes."""
+    return _mcp_result(await client.list_extension_profiles())
+
+
+@mcp.tool()
+async def cameo_install_extension_pattern_preview(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Preview installing bridge-owned safety/cyber extension patterns."""
+    return _mcp_result(await client.install_extension_pattern_preview(payload=payload))
+
+
+@mcp.tool()
+async def cameo_get_typed_diagram_capabilities() -> dict[str, Any]:
+    """Probe typed diagram inspection and write-preview support."""
+    return _mcp_result(await client.get_typed_diagram_capabilities())
+
+
+@mcp.tool()
+async def cameo_list_typed_diagrams() -> dict[str, Any]:
+    """List diagrams with type metadata for typed handlers."""
+    return _mcp_result(await client.list_typed_diagrams())
+
+
+@mcp.tool()
+async def cameo_inspect_typed_diagram(diagram_id: str) -> dict[str, Any]:
+    """Inspect a diagram through the typed diagram route."""
+    return _mcp_result(await client.inspect_typed_diagram(diagram_id))
+
+
+@mcp.tool()
+async def cameo_preview_typed_diagram_operation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Preview a typed diagram operation such as sequence-message, state-transition, parametric-binding, or legend-apply."""
+    return _mcp_result(await client.preview_typed_diagram_operation(operation=operation, payload=payload))
+
+
+@mcp.tool()
+async def cameo_refuse_compliance_claim(
+    claim_type: str,
+    evidence_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Return the bridge refusal contract for unsupported compliance claims."""
+    return _mcp_result(await client.refuse_compliance_claim(
+        claim_type=claim_type,
+        evidence_ids=evidence_ids,
+    ))
+
+
+@mcp.tool()
+async def cameo_get_traceability_graph(
+    root_element_ids: Optional[list[str]] = None,
+    context_element_id: Optional[str] = None,
+    relation_map_id: Optional[str] = None,
+    relationship_types: Optional[list[str]] = None,
+    direction: str = "both",
+    max_depth: int = 3,
+    max_nodes: int = 250,
+) -> dict[str, Any]:
+    """Build a read-only relationship graph for traceability analysis.
+
+    This is independent of Cameo's native Relation Map criteria UI. Use it when
+    a map must reveal actual linked elements across Refine, DeriveReqt, Satisfy,
+    Allocate, Dependency, activity-flow, connector, or information-flow links.
+
+    Args:
+        root_element_ids: One or more model element IDs to start from.
+        context_element_id: Single root element ID; convenient alternative to
+            root_element_ids.
+        relation_map_id: Optional Relation Map ID. When supplied without roots,
+            the map's persisted context element is used.
+        relationship_types: Optional names/stereotypes to include, such as
+            ["Refine", "DeriveReqt", "Satisfy", "Allocate", "Dependency"].
+        direction: "incoming", "outgoing", or "both". Defaults to "both".
+        max_depth: Breadth-first traversal depth. Defaults to 3.
+        max_nodes: Safety cap on returned nodes. Defaults to 250.
+    """
+    result = await client.get_traceability_graph(
+        root_element_ids=root_element_ids,
+        context_element_id=context_element_id,
+        relation_map_id=relation_map_id,
+        relationship_types=relationship_types,
+        direction=direction,
+        max_depth=max_depth,
+        max_nodes=max_nodes,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_dump_diagram_properties(
+    diagram_id: str,
+    include_raw: bool = False,
+    include_presentation_properties: bool = False,
+    summary_only: bool = True,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Dump diagram settings and paged presentation property summaries.
+
+    Use this for before/after UI snapshots of diagrams, matrices, generic
+    tables, and Relation Maps. Defaults avoid returning every symbol property
+    unless include_presentation_properties is true.
+    """
+    result = await client.get_diagram_properties(
+        diagram_id=diagram_id,
+        include_raw=include_raw,
+        include_presentation_properties=include_presentation_properties,
+        summary_only=summary_only,
+        limit=limit,
+        offset=offset,
+    )
+    return _mcp_result(result)
+
+
+@mcp.tool()
+async def cameo_dump_presentation_properties(
+    diagram_id: str,
+    presentation_id: str,
+    include_raw: bool = False,
+    summary_only: bool = False,
+) -> dict[str, Any]:
+    """Dump full properties for one selected diagram presentation element."""
+    result = await client.get_presentation_properties(
+        diagram_id=diagram_id,
+        presentation_id=presentation_id,
+        include_raw=include_raw,
+        summary_only=summary_only,
     )
     return _mcp_result(result)
 
@@ -1538,6 +2697,11 @@ async def cameo_create_diagram(
     type: str,
     name: str,
     parent_id: str,
+    relation_map_context_id: Optional[str] = None,
+    relation_map_scope_ids: Optional[list[str]] = None,
+    relation_map_element_types: Optional[list[str]] = None,
+    relation_map_dependency_criteria: Optional[list[str]] = None,
+    relation_map_depth: Optional[int] = None,
 ) -> dict[str, Any]:
     """Create a new SysML or UML diagram.
 
@@ -1549,12 +2713,23 @@ async def cameo_create_diagram(
                 "Sequence", "StateMachine", "Component", "Deployment",
                 "CompositeStructure", "Object", "Communication",
                 "InteractionOverview", "Timing", "Profile"
+              - Analysis/navigation: "RelationMap", "Content Diagram"
               Common aliases such as "InternalBlockDiagram",
               "SysML IBD", "ClassDiagram", or "StateMachineDiagram"
               are normalized to this validated token set automatically.
         name: Display name for the diagram.
         parent_id: ID of the parent element that owns this diagram
                    (typically a Package or Block).
+        relation_map_context_id: Optional context/root element ID for
+            RelationMap diagrams.
+        relation_map_scope_ids: Optional scope root element IDs for RelationMap
+            diagrams.
+        relation_map_element_types: Optional metaclass or stereotype names to
+            include in RelationMap diagrams, such as ["Block", "Requirement"].
+        relation_map_dependency_criteria: Optional native structured-expression
+            XML criteria strings for RelationMap relationship filters.
+        relation_map_depth: Optional RelationMap traversal depth. Use -1 for
+            indefinite depth.
 
     Returns:
         JSON with the created diagram ID and details.
@@ -1563,6 +2738,11 @@ async def cameo_create_diagram(
         type=type,
         name=name,
         parent_id=parent_id,
+        relation_map_context_id=relation_map_context_id,
+        relation_map_scope_ids=relation_map_scope_ids,
+        relation_map_element_types=relation_map_element_types,
+        relation_map_dependency_criteria=relation_map_dependency_criteria,
+        relation_map_depth=relation_map_depth,
     )
     return _mcp_result(result)
 
@@ -1619,12 +2799,15 @@ async def cameo_get_diagram_image(
     max_width: Optional[int] = None,
     max_height: Optional[int] = None,
     quality: int = 85,
+    scale_percentage: Optional[int] = None,
 ) -> dict[str, Any]:
     """Export a diagram as a base64-encoded PNG image.
 
     By default this returns the full base64 payload. To keep large diagrams
     below MCP token limits, set `include_image=False` for metadata only and/or
     use `max_width` / `max_height` plus `format="jpeg"` to shrink the payload.
+    Use `scale_percentage` to request a higher-resolution native Cameo export
+    before any optional client-side resizing/transcoding.
 
     Args:
         diagram_id: The unique ID of the diagram to export.
@@ -1635,11 +2818,18 @@ async def cameo_get_diagram_image(
         max_width: Optional maximum width in pixels for returned image data.
         max_height: Optional maximum height in pixels for returned image data.
         quality: Lossy encoder quality for `jpeg`/`webp` outputs.
+        scale_percentage: Optional native Cameo export scale from 25 to 1000.
 
     Returns:
         JSON with base64-encoded image data and metadata (width, height).
     """
-    result = await client.get_diagram_image(diagram_id)
+    if scale_percentage is None:
+        result = await client.get_diagram_image(diagram_id)
+    else:
+        result = await client.get_diagram_image(
+            diagram_id,
+            scale_percentage=scale_percentage,
+        )
     return _mcp_result(
         _transform_diagram_image(
             result,

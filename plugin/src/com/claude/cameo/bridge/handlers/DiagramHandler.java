@@ -9,18 +9,23 @@ import com.nomagic.magicdraw.core.Project;
 import com.nomagic.magicdraw.export.image.ImageExporter;
 import com.nomagic.magicdraw.openapi.uml.ModelElementsManager;
 import com.nomagic.magicdraw.openapi.uml.PresentationElementsManager;
+import com.nomagic.magicdraw.uml.ClassTypes;
 import com.nomagic.magicdraw.uml.symbols.DiagramPresentationElement;
 import com.nomagic.magicdraw.uml.symbols.PresentationElement;
 import com.nomagic.magicdraw.uml.symbols.shapes.ShapeElement;
 import com.nomagic.magicdraw.uml.symbols.paths.PathElement;
+import com.nomagic.magicdraw.visualization.relationshipmap.RelationshipMapUtilities;
+import com.nomagic.magicdraw.visualization.relationshipmap.model.settings.BasicGraphSettings;
 import com.nomagic.magicdraw.properties.PropertyManager;
 import com.nomagic.magicdraw.properties.Property;
+import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Diagram;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
 import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Namespace;
 import com.nomagic.uml2.ext.magicdraw.activities.mdintermediateactivities.ActivityPartition;
+import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.google.gson.JsonArray;
@@ -240,11 +245,14 @@ public class DiagramHandler implements HttpHandler {
     }
 
     private void handleExportImage(HttpExchange exchange, String diagramId) throws Exception {
+        Map<String, String> params = JsonHelper.parseQuery(exchange);
+        int scalePercentage = parseScalePercentage(params);
+
         JsonObject result = EdtDispatcher.read(project -> {
             DiagramPresentationElement dpe = findDiagramById(project, diagramId);
             dpe.ensureLoaded();
 
-            BufferedImage image = ImageExporter.export(dpe, false);
+            BufferedImage image = ImageExporter.export(dpe, false, scalePercentage);
             if (image == null) {
                 throw new IllegalStateException(
                         "ImageExporter returned null for diagram: " + diagramId);
@@ -260,11 +268,33 @@ public class DiagramHandler implements HttpHandler {
             response.addProperty("format", "png");
             response.addProperty("width", image.getWidth());
             response.addProperty("height", image.getHeight());
+            response.addProperty("scalePercentage", scalePercentage);
             response.addProperty("image", base64);
             return response;
         });
 
         HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
+    private int parseScalePercentage(Map<String, String> params) {
+        String value = params.get("scalePercentage");
+        if (value == null || value.isBlank()) {
+            value = params.get("scale");
+        }
+        if (value == null || value.isBlank()) {
+            return 100;
+        }
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 25 || parsed > 1000) {
+                throw new IllegalArgumentException(
+                        "scalePercentage must be between 25 and 1000");
+            }
+            return parsed;
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException(
+                    "scalePercentage must be an integer between 25 and 1000");
+        }
     }
 
     private void handleCreateDiagram(HttpExchange exchange) throws Exception {
@@ -279,6 +309,7 @@ public class DiagramHandler implements HttpHandler {
         String diagramType = body.get("type").getAsString();
         String name = body.has("name") ? body.get("name").getAsString() : null;
         String parentId = body.has("parentId") ? body.get("parentId").getAsString() : null;
+        RelationMapOptions relationMapOptions = RelationMapOptions.fromJson(body);
 
         JsonObject result = EdtDispatcher.write("MCP Bridge: Create Diagram", project -> {
             Namespace parent;
@@ -319,10 +350,146 @@ public class DiagramHandler implements HttpHandler {
             response.addProperty("name", diagram.getName() != null ? diagram.getName() : "");
             response.addProperty("type", resolvedType);
             response.addProperty("parentId", parent.getID());
+            if (isRelationMapType(resolvedType) && relationMapOptions.hasConfiguration()) {
+                JsonObject relationMap = configureRelationMap(project, diagram, relationMapOptions);
+                response.add("relationMap", relationMap);
+            }
             return response;
         });
 
         HttpBridgeServer.sendJson(exchange, 201, result);
+    }
+
+    private boolean isRelationMapType(String diagramType) {
+        return "Relation Map Diagram".equals(diagramType);
+    }
+
+    private JsonObject configureRelationMap(
+            Project project,
+            Diagram diagram,
+            RelationMapOptions options) {
+        BasicGraphSettings settings = new BasicGraphSettings(diagram);
+
+        JsonObject response = new JsonObject();
+        response.addProperty("configured", true);
+
+        if (options.contextId != null) {
+            Element context = resolveElement(project, options.contextId, "Relation map context element");
+            settings.setContextElement(context);
+            settings.setMakeElementAsContext(true);
+            response.add("context", ElementSerializer.toJsonCompact(context));
+        }
+
+        if (options.scopeIds != null) {
+            List<Element> scopes = resolveElements(project, options.scopeIds, "Relation map scope element");
+            settings.setScopeRoots(scopes);
+            JsonArray scopeJson = new JsonArray();
+            for (Element scope : scopes) {
+                scopeJson.add(ElementSerializer.toJsonCompact(scope));
+            }
+            response.add("scope", scopeJson);
+            response.addProperty("scopeCount", scopes.size());
+        }
+
+        if (options.elementTypes != null) {
+            List<Element> elementTypes = resolveTypeElements(project, options.elementTypes);
+            settings.setElementTypes(elementTypes);
+            settings.setTypesIncludeSubtypes(true);
+            settings.setIncludeCustomTypes(true);
+            JsonArray typesJson = new JsonArray();
+            for (Element elementType : elementTypes) {
+                typesJson.add(ElementSerializer.toJsonCompact(elementType));
+            }
+            response.add("elementTypes", typesJson);
+            response.addProperty("elementTypeCount", elementTypes.size());
+        }
+
+        if (options.dependencyCriteria != null) {
+            settings.setDependencyCriterion(options.dependencyCriteria);
+            response.addProperty("dependencyCriteriaCount", options.dependencyCriteria.size());
+        }
+
+        if (options.depth != null) {
+            settings.setDepth(options.depth);
+            response.addProperty("depth", options.depth);
+        }
+
+        settings.setInitialized(true);
+        RelationshipMapUtilities.refreshMap(diagram);
+        response.addProperty("refreshed", true);
+        return response;
+    }
+
+    private Element resolveElement(Project project, String elementId, String label) {
+        Object element = project.getElementByID(elementId);
+        if (element instanceof Element resolved) {
+            return resolved;
+        }
+        throw new IllegalArgumentException(label + " not found: " + elementId);
+    }
+
+    private List<Element> resolveElements(Project project, List<String> ids, String label) {
+        List<Element> elements = new ArrayList<>(ids.size());
+        for (String id : ids) {
+            elements.add(resolveElement(project, id, label));
+        }
+        return elements;
+    }
+
+    private List<Element> resolveTypeElements(Project project, List<String> typeNames) {
+        List<Element> resolved = new ArrayList<>(typeNames.size());
+        for (String typeName : typeNames) {
+            resolved.add(resolveTypeElement(project, typeName));
+        }
+        return resolved;
+    }
+
+    private Element resolveTypeElement(Project project, String typeName) {
+        Stereotype stereotype = resolveStereotype(project, typeName);
+        if (stereotype != null) {
+            return stereotype;
+        }
+
+        com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class metaClass = resolveMetaClass(project, typeName);
+        if (metaClass != null) {
+            return metaClass;
+        }
+
+        throw new IllegalArgumentException("Unknown relation map element type: " + typeName);
+    }
+
+    private Stereotype resolveStereotype(Project project, String stereotypeName) {
+        String normalized = normalizeTypeToken(stereotypeName);
+        Collection<Stereotype> stereotypes = StereotypesHelper.getAllStereotypes(project);
+        if (stereotypes == null) {
+            return null;
+        }
+        for (Stereotype stereotype : stereotypes) {
+            if (normalized.equals(normalizeTypeToken(stereotype.getName()))) {
+                return stereotype;
+            }
+        }
+        return null;
+    }
+
+    private com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Class resolveMetaClass(
+            Project project,
+            String rawTypeName) {
+        java.lang.Class<?> metaclass = ClassTypes.getClassType(rawTypeName);
+        if (metaclass == null) {
+            metaclass = ClassTypes.getClassType(normalizeTypeToken(rawTypeName));
+        }
+        if (metaclass == null) {
+            return null;
+        }
+        String shortName = ClassTypes.getShortName(metaclass);
+        return shortName != null && !shortName.isEmpty()
+                ? StereotypesHelper.getMetaClassByName(project, shortName)
+                : null;
+    }
+
+    private String normalizeTypeToken(String input) {
+        return input == null ? "" : input.replaceAll("[^A-Za-z0-9]+", "").toLowerCase();
     }
 
     private void handleAddElement(HttpExchange exchange, String diagramId) throws Exception {
@@ -2852,6 +3019,52 @@ public class DiagramHandler implements HttpHandler {
         }
     }
 
+    private static final class RelationMapOptions {
+        private final String contextId;
+        private final List<String> scopeIds;
+        private final List<String> elementTypes;
+        private final List<String> dependencyCriteria;
+        private final Integer depth;
+
+        private RelationMapOptions(
+                String contextId,
+                List<String> scopeIds,
+                List<String> elementTypes,
+                List<String> dependencyCriteria,
+                Integer depth) {
+            this.contextId = contextId;
+            this.scopeIds = scopeIds;
+            this.elementTypes = elementTypes;
+            this.dependencyCriteria = dependencyCriteria;
+            this.depth = depth;
+        }
+
+        private static RelationMapOptions fromJson(JsonObject body) {
+            Integer depth = null;
+            if (body.has("relationMapDepth") && !body.get("relationMapDepth").isJsonNull()) {
+                depth = body.get("relationMapDepth").getAsInt();
+                if (depth < BasicGraphSettings.INDEFINITE_DEPTH || depth > 100) {
+                    throw new IllegalArgumentException(
+                            "relationMapDepth must be -1 for indefinite depth, or between 0 and 100");
+                }
+            }
+            return new RelationMapOptions(
+                    JsonHelper.optionalString(body, "relationMapContextId"),
+                    JsonHelper.optionalStringList(body, "relationMapScopeIds"),
+                    JsonHelper.optionalStringList(body, "relationMapElementTypes"),
+                    JsonHelper.optionalStringList(body, "relationMapDependencyCriteria"),
+                    depth);
+        }
+
+        private boolean hasConfiguration() {
+            return contextId != null
+                    || scopeIds != null
+                    || elementTypes != null
+                    || dependencyCriteria != null
+                    || depth != null;
+        }
+    }
+
     private static final class PresentationPruneRules {
         private final Set<String> keepElementIds;
         private final List<String> dropElementTypes;
@@ -3108,6 +3321,17 @@ public class DiagramHandler implements HttpHandler {
             case "parametric diagram":
             case "sysml parametric diagram":
                 return "SysML Parametric Diagram";
+            case "relation map":
+            case "relationmap":
+            case "relation map diagram":
+            case "relationship map":
+            case "relationshipmap":
+            case "relationship map diagram":
+                return "Relation Map Diagram";
+            case "content":
+            case "contentdiagram":
+            case "content diagram":
+                return "Content Diagram";
             default:
                 return input.trim();
         }

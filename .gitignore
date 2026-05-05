@@ -21,3 +21,4 @@ Thumbs.db
 
 # Local scratch artifacts
 tmp/
+mcp-server/validation-output/
