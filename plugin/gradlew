@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# Force Java 11 for this build
+export JAVA_HOME="/mnt/c/Program Files/Amazon Corretto/jdk11.0.21_9"
+export PATH="$JAVA_HOME/bin:$PATH"
+
 #
 # Copyright © 2015-2021 the original authors.
 #
@@ -122,6 +126,10 @@ if [ -n "$JAVA_HOME" ] ; then
         JAVACMD=$JAVA_HOME/jre/sh/java
     else
         JAVACMD=$JAVA_HOME/bin/java
+    fi
+    # Check for java.exe on Windows
+    if [ ! -x "$JAVACMD" ] && [ -x "$JAVACMD.exe" ] ; then
+        JAVACMD="$JAVACMD.exe"
     fi
     if [ ! -x "$JAVACMD" ] ; then
         die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME

@@ -22,3 +22,6 @@ Thumbs.db
 # Local scratch artifacts
 tmp/
 mcp-server/validation-output/
+
+# Local configuration (contains user-specific paths)
+config.sh

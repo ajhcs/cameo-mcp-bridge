@@ -1,0 +1,853 @@
+package com.nomagic.magicdraw.mcpbridge.handlers;
+
+import com.nomagic.magicdraw.mcpbridge.HttpBridgeServer;
+import com.nomagic.magicdraw.mcpbridge.util.EdtDispatcher;
+import com.nomagic.magicdraw.mcpbridge.util.ElementSerializer;
+import com.nomagic.magicdraw.mcpbridge.util.JsonHelper;
+import com.nomagic.magicdraw.openapi.uml.ModelElementsManager;
+import com.nomagic.uml2.ext.magicdraw.activities.mdfundamentalactivities.Activity;
+import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ActivityEdge;
+import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ControlFlow;
+import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ObjectFlow;
+import com.nomagic.uml2.ext.magicdraw.activities.mdfundamentalactivities.ActivityNode;
+import com.nomagic.uml2.ext.magicdraw.auxiliaryconstructs.mdinformationflows.InformationFlow;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.ConnectableElement;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.Connector;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.ConnectorEnd;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdinternalstructures.StructuredClassifier;
+import com.nomagic.uml2.ext.magicdraw.classes.mddependencies.Abstraction;
+import com.nomagic.uml2.ext.magicdraw.classes.mddependencies.Dependency;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.AggregationKindEnum;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Association;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Constraint;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Generalization;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralString;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Namespace;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Package;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Type;
+import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
+import com.nomagic.uml2.ext.magicdraw.mdusecases.Extend;
+import com.nomagic.uml2.ext.magicdraw.mdusecases.Include;
+import com.nomagic.uml2.ext.magicdraw.mdusecases.UseCase;
+import com.nomagic.uml2.ext.magicdraw.statemachines.mdbehaviorstatemachines.Region;
+import com.nomagic.uml2.ext.magicdraw.statemachines.mdbehaviorstatemachines.Transition;
+import com.nomagic.uml2.ext.magicdraw.statemachines.mdbehaviorstatemachines.Vertex;
+import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
+import com.nomagic.uml2.impl.ElementsFactory;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.google.gson.JsonObject;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+/**
+ * Handles relationship creation REST endpoint.
+ * POST /api/v1/relationships
+ * Body: {type, sourceId, targetId, name?, guard?, ownerId?,
+ *        sourcePartWithPortId?, targetPartWithPortId?,
+ *        realizingConnectorId?, conveyedIds?, itemPropertyId?}
+ */
+public class RelationshipHandler implements HttpHandler {
+
+    private static final Logger LOG = Logger.getLogger(RelationshipHandler.class.getName());
+
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+        try {
+            String method = exchange.getRequestMethod();
+            if ("OPTIONS".equals(method)) {
+                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, OPTIONS");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+            if (!"POST".equals(method)) {
+                HttpBridgeServer.sendError(exchange, 405, "METHOD_NOT_ALLOWED", "Only POST is supported");
+                return;
+            }
+            handleCreateRelationship(exchange);
+        } catch (IllegalArgumentException e) {
+            HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST", e.getMessage());
+        } catch (Exception e) {
+            LOG.log(Level.SEVERE, "Error in RelationshipHandler", e);
+            HttpBridgeServer.sendError(exchange, 500, "INTERNAL_ERROR", e.getMessage());
+        }
+    }
+
+    private void handleCreateRelationship(HttpExchange exchange) throws Exception {
+        JsonObject body = JsonHelper.parseBody(exchange);
+        String type = JsonHelper.requireString(body, "type");
+        String sourceId = JsonHelper.requireString(body, "sourceId");
+        String targetId = JsonHelper.requireString(body, "targetId");
+        String name = JsonHelper.optionalString(body, "name");
+        String guard = JsonHelper.optionalString(body, "guard");
+        String ownerId = JsonHelper.optionalString(body, "ownerId");
+        String sourcePartWithPortId = JsonHelper.optionalString(body, "sourcePartWithPortId");
+        String targetPartWithPortId = JsonHelper.optionalString(body, "targetPartWithPortId");
+        String realizingConnectorId = JsonHelper.optionalString(body, "realizingConnectorId");
+        String itemPropertyId = JsonHelper.optionalString(body, "itemPropertyId");
+        List<String> conveyedIds = JsonHelper.optionalStringList(body, "conveyedIds");
+
+        JsonObject result = EdtDispatcher.write("Create " + type + " relationship", project -> {
+            Element source = (Element) project.getElementByID(sourceId);
+            if (source == null) {
+                throw new IllegalArgumentException("Source element not found: " + sourceId);
+            }
+            Element target = (Element) project.getElementByID(targetId);
+            if (target == null) {
+                throw new IllegalArgumentException("Target element not found: " + targetId);
+            }
+
+            ElementsFactory ef = project.getElementsFactory();
+            Element relationship;
+
+            switch (type.toLowerCase()) {
+                case "generalization":
+                    relationship = createGeneralization(ef, source, target);
+                    break;
+                case "include":
+                    relationship = createInclude(ef, source, target);
+                    break;
+                case "extend":
+                    relationship = createExtend(ef, source, target);
+                    break;
+                case "dependency":
+                    relationship = createDependency(ef, project, source, target, ownerId);
+                    break;
+                case "association":
+                    relationship = createAssociation(ef, source, target, false, false);
+                    break;
+                case "directed-association":
+                case "directedassociation":
+                    relationship = createAssociation(ef, source, target, true, false);
+                    break;
+                case "composition":
+                    relationship = createAssociation(ef, source, target, true, true);
+                    break;
+                case "control-flow":
+                case "controlflow":
+                    relationship = createControlFlow(ef, project, source, target, guard, ownerId);
+                    break;
+                case "object-flow":
+                case "objectflow":
+                    relationship = createObjectFlow(ef, project, source, target, guard, ownerId);
+                    break;
+                case "allocate":
+                    relationship = createStereotypedAbstraction(
+                            ef, project, source, target, ownerId, "Allocate");
+                    break;
+                case "satisfy":
+                    relationship = createStereotypedAbstraction(
+                            ef, project, source, target, ownerId, "Satisfy");
+                    break;
+                case "verify":
+                    relationship = createStereotypedAbstraction(
+                            ef, project, source, target, ownerId, "Verify");
+                    break;
+                case "derive":
+                    relationship = createStereotypedAbstraction(
+                            ef, project, source, target, ownerId, "DeriveReqt");
+                    break;
+                case "refine":
+                    relationship = createStereotypedAbstraction(
+                            ef, project, source, target, ownerId, "Refine");
+                    break;
+                case "trace":
+                    relationship = createStereotypedAbstraction(
+                            ef, project, source, target, ownerId, "Trace");
+                    break;
+                case "transition":
+                    relationship = createTransition(ef, source, target, guard);
+                    break;
+                case "connector":
+                    relationship = createConnector(
+                            ef,
+                            project,
+                            source,
+                            target,
+                            ownerId,
+                            sourcePartWithPortId,
+                            targetPartWithPortId);
+                    break;
+                case "informationflow":
+                case "information-flow":
+                    relationship = createInformationFlow(
+                            ef,
+                            project,
+                            source,
+                            target,
+                            ownerId,
+                            realizingConnectorId,
+                            conveyedIds,
+                            itemPropertyId,
+                            false);
+                    break;
+                case "itemflow":
+                case "item-flow":
+                    relationship = createInformationFlow(
+                            ef,
+                            project,
+                            source,
+                            target,
+                            ownerId,
+                            realizingConnectorId,
+                            conveyedIds,
+                            itemPropertyId,
+                            true);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported relationship type: " + type
+                            + ". Supported: association, directed-association, generalization, "
+                            + "include, extend, dependency, control-flow, object-flow, "
+                            + "composition, allocate, satisfy, verify, derive, refine, trace, transition, connector, "
+                            + "information-flow, item-flow");
+            }
+
+            if (name != null && relationship instanceof NamedElement) {
+                ((NamedElement) relationship).setName(name);
+            }
+
+            JsonObject response = new JsonObject();
+            response.addProperty("created", true);
+            response.addProperty("relationshipType", type);
+            response.add("relationship", ElementSerializer.toJson(relationship));
+            return response;
+        });
+        HttpBridgeServer.sendJson(exchange, 201, result);
+    }
+
+    private Generalization createGeneralization(ElementsFactory ef, Element source, Element target) throws Exception {
+        if (!(source instanceof Classifier) || !(target instanceof Classifier)) {
+            throw new IllegalArgumentException("Generalization requires Classifier source and target");
+        }
+        Generalization gen = ef.createGeneralizationInstance();
+        gen.setSpecific((Classifier) source);
+        gen.setGeneral((Classifier) target);
+        ModelElementsManager.getInstance().addElement(gen, source);
+        return gen;
+    }
+
+    private Include createInclude(ElementsFactory ef, Element source, Element target) throws Exception {
+        if (!(source instanceof UseCase) || !(target instanceof UseCase)) {
+            throw new IllegalArgumentException("Include requires UseCase source and target");
+        }
+        Include inc = ef.createIncludeInstance();
+        inc.setIncludingCase((UseCase) source);
+        inc.setAddition((UseCase) target);
+        ModelElementsManager.getInstance().addElement(inc, source);
+        return inc;
+    }
+
+    private Extend createExtend(ElementsFactory ef, Element source, Element target) throws Exception {
+        if (!(source instanceof UseCase) || !(target instanceof UseCase)) {
+            throw new IllegalArgumentException("Extend requires UseCase source and target");
+        }
+        Extend ext = ef.createExtendInstance();
+        ext.setExtension((UseCase) source);
+        ext.setExtendedCase((UseCase) target);
+        ModelElementsManager.getInstance().addElement(ext, source);
+        return ext;
+    }
+
+    private Dependency createDependency(
+            ElementsFactory ef,
+            com.nomagic.magicdraw.core.Project project,
+            Element source,
+            Element target,
+            String ownerId) throws Exception {
+        if (!(source instanceof NamedElement) || !(target instanceof NamedElement)) {
+            throw new IllegalArgumentException(
+                    "Dependency requires NamedElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
+        }
+        Dependency dep = ef.createDependencyInstance();
+        dep.getClient().add((NamedElement) source);
+        dep.getSupplier().add((NamedElement) target);
+        ModelElementsManager.getInstance().addElement(
+                dep,
+                resolvePackagedOwner(project, ownerId, source, "Dependency"));
+        return dep;
+    }
+
+    private Association createAssociation(ElementsFactory ef, Element source, Element target,
+            boolean directed, boolean composition) throws Exception {
+        if (!(source instanceof Type) || !(target instanceof Type)) {
+            throw new IllegalArgumentException("Association requires Type source and target");
+        }
+        Association assoc = ef.createAssociationInstance();
+
+        // The factory pre-creates two owned ends - use them directly
+        Property sourceEnd = (Property) assoc.getOwnedEnd().get(0);
+        sourceEnd.setType((Type) source);
+        Property targetEnd = (Property) assoc.getOwnedEnd().get(1);
+        targetEnd.setType((Type) target);
+
+        if (composition) {
+            sourceEnd.setAggregation(AggregationKindEnum.COMPOSITE);
+        }
+
+        // For directed association, make target end navigable
+        if (directed) {
+            targetEnd.setAssociation(assoc);
+        }
+
+        // Set owner to source's package so the association persists
+        Element owner = source.getOwner();
+        if (owner != null) {
+            ModelElementsManager.getInstance().addElement(assoc, owner);
+        }
+        return assoc;
+    }
+
+    private ControlFlow createControlFlow(ElementsFactory ef,
+            com.nomagic.magicdraw.core.Project project,
+            Element source, Element target, String guard, String ownerId) throws Exception {
+        if (!(source instanceof ActivityNode) || !(target instanceof ActivityNode)) {
+            throw new IllegalArgumentException("ControlFlow requires ActivityNode source and target");
+        }
+        ControlFlow flow = ef.createControlFlowInstance();
+        attachActivityEdge(flow, project, source, ownerId);
+        flow.setSource((ActivityNode) source);
+        flow.setTarget((ActivityNode) target);
+        if (guard != null && !guard.isEmpty()) {
+            LiteralString guardSpec = ef.createLiteralStringInstance();
+            guardSpec.setValue(guard);
+            flow.setGuard(guardSpec);
+        }
+        return flow;
+    }
+
+    private ObjectFlow createObjectFlow(ElementsFactory ef,
+            com.nomagic.magicdraw.core.Project project,
+            Element source, Element target, String guard, String ownerId) throws Exception {
+        if (!(source instanceof ActivityNode) || !(target instanceof ActivityNode)) {
+            throw new IllegalArgumentException("ObjectFlow requires ActivityNode source and target");
+        }
+        ObjectFlow flow = ef.createObjectFlowInstance();
+        attachActivityEdge(flow, project, source, ownerId);
+        flow.setSource((ActivityNode) source);
+        flow.setTarget((ActivityNode) target);
+        if (guard != null && !guard.isEmpty()) {
+            LiteralString guardSpec = ef.createLiteralStringInstance();
+            guardSpec.setValue(guard);
+            flow.setGuard(guardSpec);
+        }
+        return flow;
+    }
+
+    private void attachActivityEdge(ActivityEdge edge,
+            com.nomagic.magicdraw.core.Project project,
+            Element source,
+            String ownerId) throws Exception {
+        Element owner = null;
+        if (ownerId != null && !ownerId.isEmpty()) {
+            owner = (Element) project.getElementByID(ownerId);
+        }
+        if (owner == null) {
+            owner = source.getOwner();
+        }
+        if (owner instanceof Activity) {
+            ((Activity) owner).getEdge().add(edge);
+            return;
+        }
+        if (owner != null) {
+            ModelElementsManager.getInstance().addElement(edge, owner);
+        }
+    }
+
+    private Transition createTransition(ElementsFactory ef,
+            Element source, Element target, String guard) throws Exception {
+        if (!(source instanceof Vertex) || !(target instanceof Vertex)) {
+            throw new IllegalArgumentException("Transition requires Vertex source and target");
+        }
+
+        Region sourceRegion = ((Vertex) source).getContainer();
+        Region targetRegion = ((Vertex) target).getContainer();
+        if (sourceRegion == null || targetRegion == null) {
+            throw new IllegalArgumentException("Transition endpoints must already belong to a Region");
+        }
+        if (!sourceRegion.getID().equals(targetRegion.getID())) {
+            throw new IllegalArgumentException("Transition source and target must share the same Region");
+        }
+
+        Transition transition = ef.createTransitionInstance();
+        transition.setContainer(sourceRegion);
+        transition.setSource((Vertex) source);
+        transition.setTarget((Vertex) target);
+        if (guard != null && !guard.isEmpty()) {
+            Constraint guardConstraint = ef.createConstraintInstance();
+            guardConstraint.setName("guard");
+            guardConstraint.setContext(sourceRegion);
+            LiteralString guardSpec = ef.createLiteralStringInstance();
+            guardSpec.setValue(guard);
+            guardConstraint.setSpecification(guardSpec);
+            transition.setGuard(guardConstraint);
+        }
+        return transition;
+    }
+
+    private InformationFlow createInformationFlow(
+            ElementsFactory ef,
+            com.nomagic.magicdraw.core.Project project,
+            Element source,
+            Element target,
+            String ownerId,
+            String realizingConnectorId,
+            List<String> conveyedIds,
+            String itemPropertyId,
+            boolean applyItemFlow) throws Exception {
+        if (!(source instanceof NamedElement) || !(target instanceof NamedElement)) {
+            throw new IllegalArgumentException(
+                    "InformationFlow requires NamedElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
+        }
+
+        Package owner = resolvePackageOwnerFromContext(
+                project,
+                ownerId,
+                source,
+                "InformationFlow");
+        InformationFlow flow = ef.createInformationFlowInstance();
+        flow.getInformationSource().add((NamedElement) source);
+        flow.getInformationTarget().add((NamedElement) target);
+
+        if (conveyedIds != null) {
+            for (String conveyedId : conveyedIds) {
+                Element conveyed = (Element) project.getElementByID(conveyedId);
+                if (!(conveyed instanceof Classifier)) {
+                    throw new IllegalArgumentException(
+                            "InformationFlow conveyed element must be a Classifier: "
+                                    + conveyedId);
+                }
+                flow.getConveyed().add((Classifier) conveyed);
+            }
+        }
+
+        if (realizingConnectorId != null && !realizingConnectorId.isEmpty()) {
+            Element realizingConnector = (Element) project.getElementByID(realizingConnectorId);
+            if (!(realizingConnector instanceof Connector)) {
+                throw new IllegalArgumentException(
+                        "realizingConnectorId must reference a Connector: "
+                                + realizingConnectorId);
+            }
+            flow.getRealizingConnector().add((Connector) realizingConnector);
+        }
+
+        ModelElementsManager.getInstance().addElement(flow, owner);
+
+        if (applyItemFlow || (itemPropertyId != null && !itemPropertyId.isEmpty())) {
+            Stereotype itemFlow = requireStereotype(project, "ItemFlow");
+            if (!StereotypesHelper.hasStereotype(flow, itemFlow)) {
+                StereotypesHelper.addStereotype(flow, itemFlow);
+            }
+            if (itemPropertyId != null && !itemPropertyId.isEmpty()) {
+                Element itemProperty = (Element) project.getElementByID(itemPropertyId);
+                if (!(itemProperty instanceof Property)) {
+                    throw new IllegalArgumentException(
+                            "itemPropertyId must reference a Property: " + itemPropertyId);
+                }
+                StereotypesHelper.setStereotypePropertyValue(
+                        flow,
+                        itemFlow,
+                        "itemProperty",
+                        itemProperty);
+            }
+        }
+
+        return flow;
+    }
+
+    private Connector createConnector(
+            ElementsFactory ef,
+            com.nomagic.magicdraw.core.Project project,
+            Element source,
+            Element target,
+            String ownerId,
+            String sourcePartWithPortId,
+            String targetPartWithPortId) throws Exception {
+        if (!(source instanceof ConnectableElement) || !(target instanceof ConnectableElement)) {
+            throw new IllegalArgumentException(
+                    "Connector requires ConnectableElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
+        }
+        if (ownerId == null || ownerId.isEmpty()) {
+            throw new IllegalArgumentException("Connector requires ownerId");
+        }
+
+        Element owner = (Element) project.getElementByID(ownerId);
+        if (owner == null) {
+            throw new IllegalArgumentException("Connector ownerId not found: " + ownerId);
+        }
+        if (!(owner instanceof StructuredClassifier)) {
+            throw new IllegalArgumentException(
+                    "Connector owner must be a StructuredClassifier, but resolved to "
+                            + describeElement(owner)
+                            + " from ownerId="
+                            + ownerId);
+        }
+
+        Connector connector = ef.createConnectorInstance();
+        StructuredClassifier structuredOwner = (StructuredClassifier) owner;
+        structuredOwner.getOwnedConnector().add(connector);
+
+        List<ConnectorEnd> ends = connector.getEnd();
+        ConnectorEnd sourceEnd = ends.size() > 0 ? ends.get(0) : ef.createConnectorEndInstance();
+        if (ends.isEmpty()) {
+            ends.add(sourceEnd);
+        }
+        sourceEnd.setRole((ConnectableElement) source);
+        Property sourcePartWithPort = resolvePartWithPort(project, sourcePartWithPortId);
+        if (sourcePartWithPort != null) {
+            sourceEnd.setPartWithPort(sourcePartWithPort);
+        }
+
+        ConnectorEnd targetEnd = ends.size() > 1 ? ends.get(1) : ef.createConnectorEndInstance();
+        if (ends.size() < 2) {
+            ends.add(targetEnd);
+        }
+        targetEnd.setRole((ConnectableElement) target);
+        Property targetPartWithPort = resolvePartWithPort(project, targetPartWithPortId);
+        if (targetPartWithPort != null) {
+            targetEnd.setPartWithPort(targetPartWithPort);
+        }
+
+        return connector;
+    }
+
+    private Property resolvePartWithPort(
+            com.nomagic.magicdraw.core.Project project,
+            String partWithPortId) {
+        if (partWithPortId == null || partWithPortId.isEmpty()) {
+            return null;
+        }
+        Element partWithPort = (Element) project.getElementByID(partWithPortId);
+        if (!(partWithPort instanceof Property)) {
+            throw new IllegalArgumentException(
+                    "partWithPort element must be a Property: " + partWithPortId);
+        }
+        return (Property) partWithPort;
+    }
+
+    private Abstraction createStereotypedAbstraction(ElementsFactory ef,
+            com.nomagic.magicdraw.core.Project project,
+            Element source,
+            Element target,
+            String ownerId,
+            String stereotypeName) throws Exception {
+        if (!(source instanceof NamedElement) || !(target instanceof NamedElement)) {
+            throw new IllegalArgumentException(
+                    stereotypeName + " requires NamedElement source and target. Got source="
+                            + describeElement(source)
+                            + ", target="
+                            + describeElement(target));
+        }
+        Abstraction abstraction = ef.createAbstractionInstance();
+        abstraction.getClient().add((NamedElement) source);
+        abstraction.getSupplier().add((NamedElement) target);
+
+        StereotypesHelper.addStereotype(abstraction, requireStereotype(project, stereotypeName));
+
+        ModelElementsManager.getInstance().addElement(
+                abstraction,
+                resolvePackagedOwner(project, ownerId, source, stereotypeName));
+        return abstraction;
+    }
+
+    private Package resolvePackagedOwner(
+            com.nomagic.magicdraw.core.Project project,
+            String ownerId,
+            Element source,
+            String relationshipType) {
+        if (ownerId != null && !ownerId.isEmpty()) {
+            Element owner = (Element) project.getElementByID(ownerId);
+            if (owner == null) {
+                throw new IllegalArgumentException(
+                        relationshipType + " ownerId not found: " + ownerId);
+            }
+            if (!(owner instanceof Package)) {
+                throw new IllegalArgumentException(
+                        relationshipType + " owner must be a Package or Model, but resolved to "
+                                + describeElement(owner)
+                                + " from ownerId="
+                                + ownerId
+                                + ". Omit ownerId to infer the containing package from the source.");
+            }
+            return (Package) owner;
+        }
+
+        Element current = source;
+        while (current != null) {
+            current = current.getOwner();
+            if (current instanceof Package) {
+                return (Package) current;
+            }
+        }
+
+        Package model = project.getPrimaryModel();
+        if (model != null) {
+            return model;
+        }
+        throw new IllegalStateException(
+                "Could not resolve a package owner for "
+                        + relationshipType
+                        + " relationship starting from source "
+                        + describeElement(source)
+                        + ". Provide ownerId explicitly or ensure the source is contained by a package/model.");
+    }
+
+    private Package resolvePackageOwnerFromContext(
+            com.nomagic.magicdraw.core.Project project,
+            String ownerId,
+            Element fallbackContext,
+            String relationshipType) {
+        Element context = fallbackContext;
+        if (ownerId != null && !ownerId.isEmpty()) {
+            context = (Element) project.getElementByID(ownerId);
+            if (context == null) {
+                throw new IllegalArgumentException(
+                        relationshipType + " owner/context element not found: " + ownerId);
+            }
+        }
+
+        while (context != null) {
+            if (context instanceof Package) {
+                return (Package) context;
+            }
+            context = context.getOwner();
+        }
+
+        Package model = project.getPrimaryModel();
+        if (model != null) {
+            return model;
+        }
+        throw new IllegalStateException(
+                "Could not resolve a containing package for "
+                        + relationshipType
+                        + " relationship from context "
+                        + describeElement(fallbackContext)
+                        + ". Provide a package ownerId or ensure the context is nested under a package/model.");
+    }
+
+    private Stereotype requireStereotype(
+            com.nomagic.magicdraw.core.Project project,
+            String stereotypeName) {
+        Collection<Stereotype> allStereotypes = StereotypesHelper.getAllStereotypes(project);
+        List<Stereotype> matches = new ArrayList<>();
+        if (allStereotypes != null) {
+            for (Stereotype stereotype : allStereotypes) {
+                if (stereotypeName.equalsIgnoreCase(stereotype.getName())) {
+                    matches.add(stereotype);
+                }
+            }
+        }
+        if (!matches.isEmpty()) {
+            return selectPreferredStereotype(stereotypeName, matches);
+        }
+        throw new IllegalStateException(
+                "SysML stereotype not found: "
+                        + stereotypeName
+                        + ". Preferred contexts: "
+                        + preferredStereotypeContexts(stereotypeName)
+                        + ". Ensure the relevant SysML profile is applied to the project.");
+    }
+
+    static Stereotype selectPreferredStereotype(String stereotypeName, List<Stereotype> matches) {
+        if (matches == null || matches.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No stereotype candidates were provided for " + stereotypeName);
+        }
+        if (matches.size() == 1) {
+            return matches.get(0);
+        }
+
+        List<String> preferredContexts = preferredStereotypeContexts(stereotypeName);
+        int bestRank = Integer.MAX_VALUE;
+        List<Stereotype> bestMatches = new ArrayList<>();
+        for (Stereotype stereotype : matches) {
+            int rank = stereotypePreferenceRank(stereotype, preferredContexts);
+            if (rank < bestRank) {
+                bestRank = rank;
+                bestMatches.clear();
+                bestMatches.add(stereotype);
+            } else if (rank == bestRank) {
+                bestMatches.add(stereotype);
+            }
+        }
+
+        if (bestRank != Integer.MAX_VALUE && bestMatches.size() == 1) {
+            return bestMatches.get(0);
+        }
+
+        throw new IllegalStateException(buildAmbiguousStereotypeMessage(
+                stereotypeName,
+                matches,
+                preferredContexts,
+                bestRank));
+    }
+
+    private static List<String> preferredStereotypeContexts(String stereotypeName) {
+        switch (stereotypeName.toLowerCase()) {
+            case "refine":
+            case "derivereqt":
+            case "satisfy":
+            case "verify":
+            case "trace":
+                return List.of("Requirements", "SysML", "SysMLProfile");
+            case "allocate":
+                return List.of("Allocations", "SysML", "SysMLProfile");
+            case "itemflow":
+                return List.of("PortsAndFlows", "SysML", "SysMLProfile");
+            default:
+                return List.of("SysML", "SysMLProfile", "Requirements");
+        }
+    }
+
+    private static int stereotypePreferenceRank(
+            Stereotype stereotype,
+            List<String> preferredContexts) {
+        List<String> availableContexts = stereotypeContextNames(stereotype);
+        for (int i = 0; i < preferredContexts.size(); i++) {
+            String preferred = normalizeContextToken(preferredContexts.get(i));
+            for (String context : availableContexts) {
+                if (preferred.equals(normalizeContextToken(context))) {
+                    return i;
+                }
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private static List<String> stereotypeContextNames(Stereotype stereotype) {
+        List<String> contexts = new ArrayList<>();
+        if (stereotype != null) {
+            com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile profile = stereotype.getProfile();
+            if (profile != null && profile.getName() != null && !profile.getName().isBlank()) {
+                contexts.add(profile.getName());
+            }
+        }
+        Element current = stereotype;
+        while (current != null) {
+            if (current instanceof NamedElement) {
+                String name = ((NamedElement) current).getName();
+                if (name != null && !name.isBlank()) {
+                    contexts.add(name);
+                }
+            }
+            current = current.getOwner();
+        }
+        return contexts;
+    }
+
+    private static String buildAmbiguousStereotypeMessage(
+            String stereotypeName,
+            List<Stereotype> matches,
+            List<String> preferredContexts,
+            int bestRank) {
+        StringBuilder message = new StringBuilder()
+                .append("Ambiguous stereotype resolution for ")
+                .append(stereotypeName)
+                .append(". ");
+        if (bestRank != Integer.MAX_VALUE && bestRank < preferredContexts.size()) {
+            message.append("Multiple candidates matched preferred context ")
+                    .append(preferredContexts.get(bestRank))
+                    .append(". ");
+        } else {
+            message.append("No candidate matched preferred contexts ")
+                    .append(preferredContexts)
+                    .append(". ");
+        }
+        message.append("Candidates: ");
+        for (int i = 0; i < matches.size(); i++) {
+            if (i > 0) {
+                message.append("; ");
+            }
+            message.append(describeStereotypeCandidate(matches.get(i)));
+        }
+        message.append(". Update the preference mapping or apply the intended SysML profile explicitly.");
+        return message.toString();
+    }
+
+    static String describeElement(Element element) {
+        if (element == null) {
+            return "<null>";
+        }
+
+        String humanType = element.getHumanType();
+        if (humanType == null || humanType.isBlank()) {
+            humanType = element.getClassType() != null
+                    ? element.getClassType().getSimpleName()
+                    : element.getClass().getSimpleName();
+        }
+
+        String humanName = element.getHumanName();
+        if ((humanName == null || humanName.isBlank()) && element instanceof NamedElement) {
+            humanName = ((NamedElement) element).getName();
+        }
+        if (humanName == null || humanName.isBlank()) {
+            humanName = "<unnamed>";
+        }
+
+        String id = element.getID();
+        if (id == null || id.isBlank()) {
+            id = "<no-id>";
+        }
+
+        return humanType + " '" + humanName + "' [id=" + id + "]";
+    }
+
+    private static String describeStereotypeCandidate(Stereotype stereotype) {
+        String profileName = "<no-profile>";
+        if (stereotype != null && stereotype.getProfile() != null) {
+            String name = stereotype.getProfile().getName();
+            if (name != null && !name.isBlank()) {
+                profileName = name;
+            }
+        }
+        return describeElement(stereotype)
+                + " profile="
+                + profileName
+                + " ownerPath="
+                + buildOwnerPath(stereotype);
+    }
+
+    private static String buildOwnerPath(Element element) {
+        List<String> names = new ArrayList<>();
+        Element current = element != null ? element.getOwner() : null;
+        while (current != null) {
+            if (current instanceof NamedElement) {
+                String currentName = ((NamedElement) current).getName();
+                if (currentName != null && !currentName.isBlank()) {
+                    names.add(0, currentName);
+                }
+            }
+            current = current.getOwner();
+        }
+        return names.isEmpty() ? "<root>" : String.join(" > ", names);
+    }
+
+    private static String normalizeContextToken(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.toLowerCase(Locale.ROOT)
+                .replace("&", "and")
+                .replaceAll("[^a-z0-9]", "");
+    }
+
+}

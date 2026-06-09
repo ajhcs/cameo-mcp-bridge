@@ -1,16 +1,20 @@
-# Cameo MCP Bridge
+# MagicDraw MCP Bridge (2022xR2 Backport)
 
-An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **MagicDraw 2022xR2** -- the industry-standard MBSE tool for SysML and UML modeling.
 
-This lets Claude Code (or any MCP-compatible client) **query, create, modify, inspect, validate, and visualize** SysML/UML models inside a running Cameo instance through 162 tools covering capability negotiation, methodology-aware OOSEM workflows, semantic validation, state-machine semantics, elements, relationships, native matrices and tables, Relation Maps, reports, requirements import/export, validation suites, Teamwork/DataHub probes, diagrams, reusable verification, specifications, and guarded macro execution.
+This is a backported version of the Cameo MCP Bridge, adapted to work with MagicDraw 2022xR2 with a `com.nomagic` package namespace to comply with corporate plugin restrictions.
+
+> **Note on Methodology References:** This project's documentation references public MBSE methodologies and frameworks including OOSEM, UAF, and DoDAF. These references describe potential use cases for the bridge and are not affiliated with any specific defense program, contractor, or classified work. All methodology frameworks referenced are publicly available standards.
+
+This lets Claude Code (or any MCP-compatible client) **query, create, modify, inspect, validate, and visualize** SysML/UML models inside a running MagicDraw instance through 162 tools covering capability negotiation, methodology-aware OOSEM workflows, semantic validation, state-machine semantics, elements, relationships, native matrices and tables, Relation Maps, reports, requirements import/export, validation suites, diagrams, reusable verification, specifications, and guarded macro execution.
 
 ```
-Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (Cameo JVM)
+Claude Code  <--stdio/MCP-->  Python MCP Server  <--HTTP/REST-->  Java Plugin (MagicDraw JVM)
 ```
 
 ## Why This Exists
 
-MBSE tools like Cameo are powerful but manual. With this bridge, an AI assistant can:
+MBSE tools like MagicDraw are powerful but manual. With this bridge, an AI assistant can:
 
 - **Build models from requirements** -- "Create a state machine for ATM operations with idle, active, and maintenance states"
 - **Query and navigate models** -- "Show me all blocks with the `<<requirement>>` stereotype"
@@ -23,12 +27,12 @@ MBSE tools like Cameo are powerful but manual. With this bridge, an AI assistant
 
 | Project | Approach | Status |
 |---------|----------|--------|
-| **This project** | Talks directly to Cameo's Java API via an embedded plugin | Production-tested |
+| **This project** | Talks directly to MagicDraw's Java API via an embedded plugin | Backported to 2022xR2 |
+| [Cameo MCP Bridge](https://github.com/ajhcs/cameo-mcp-bridge) | Original version for Cameo/CATIA Magic 2024x | Production |
 | [SysML v2 API MCP Server](https://github.com/redsteve/SysML-v2-API-MCP-Server) | Connects to SysML v2 REST API (tool-agnostic) | Early stage, C++ |
 | [EA MCP Server](https://www.sparxsystems.jp/en/MCP/) | Enterprise Architect integration | Closed-source, Windows-only |
-| Dassault's prototype | SysML v2 + MCP demo | Promotional, not shipped |
 
-This is the only open-source MCP server that integrates directly with a running Cameo instance, giving full access to SysML v1 models and the complete Cameo API surface.
+This is an open-source MCP server that integrates directly with a running MagicDraw 2022xR2 instance, giving full access to SysML v1 models and the MagicDraw OpenAPI surface.
 
 ## Architecture
 
@@ -36,7 +40,7 @@ This is the only open-source MCP server that integrates directly with a running 
 +-------------------+         +---------------------+         +---------------------------+
 |                   |  stdio  |                     |  HTTP   |                           |
 |  Claude Code /    |-------->|  Python MCP Server  |-------->|  Java Plugin              |
-|  Any MCP Client   |<--------|  (cameo_mcp)        |<--------|  (CameoMCPBridgePlugin)   |
+|  Any MCP Client   |<--------|  (cameo_mcp)        |<--------|  (MagicDrawMCPBridge)     |
 |                   |   MCP   |                     | JSON    |                           |
 +-------------------+         +---------------------+         +---------------------------+
                                                                |                         |
@@ -54,12 +58,20 @@ This is the only open-source MCP server that integrates directly with a running 
                                                                +---------------------------+
                                                                          |
                                                                +---------v---------+
-                                                               | CATIA Magic /     |
-                                                               | Cameo JVM         |
+                                                               | MagicDraw 2022xR2 |
+                                                               | JVM               |
                                                                | (OpenAPI, EMF,    |
                                                                |  SessionManager)  |
                                                                +-------------------+
 ```
+
+**Key Architecture Changes for 2022xR2:**
+
+- **Package Name**: `com.nomagic.magicdraw.mcpbridge` (was `com.claude.cameo.bridge`)
+- **Plugin ID**: `com.nomagic.magicdraw.mcpbridge`
+- **Java Version**: Java 11 (downgraded from Java 17)
+- **Target**: MagicDraw 2022xR2 (was Cameo/CATIA Magic 2024x)
+- **Plugin Version**: `1.0.0-md2022xr2`
 
 **Data flow for a write operation:**
 
@@ -69,38 +81,51 @@ This is the only open-source MCP server that integrates directly with a running 
 4. On EDT: opens a `SessionManager` session, executes the operation, closes the session
 5. JSON response flows back through the layers
 
-All write operations are session-wrapped for undo/redo support. Read operations run on the HTTP thread pool (Cameo model reads are thread-safe).
+All write operations are session-wrapped for undo/redo support. Read operations run on the HTTP thread pool (MagicDraw model reads are thread-safe).
 
 ## Prerequisites
 
-- **CATIA Magic / Cameo Systems Modeler** 2024x or newer (any bundle: Systems of Systems Architect, Cyber Systems Engineer, etc.)
-- **Java 17 JDK** available to Gradle
+- **MagicDraw 2022xR2** installed
+- **Java 11 JDK** (Amazon Corretto 11.0.21 recommended)
 - **Python 3.10+** with `pip`
-- **Gradle 8.x** (wrapper included)
+- **Gradle** (not required if using pre-built plugin)
 
 ## Installation
 
-### Quick Install
+### Step 1: Configure Paths
+
+Copy the configuration template and edit it with your local paths:
 
 ```bash
-git clone https://github.com/ajhcs/cameo-mcp-bridge.git
+cp config.template.sh config.sh
+# Edit config.sh and set:
+# - MAGICDRAW_HOME (path to your MagicDraw 2022xR2 installation)
+# - JAVA11_HOME (path to your Java 11 JDK)
+```
+
+**Example config.sh:**
+```bash
+export MAGICDRAW_HOME="C:/MagicDraw2022xR2"
+export JAVA11_HOME="C:/Program Files/Amazon Corretto/jdk11.0.21_9"
+```
+
+**Note:** `config.sh` is in `.gitignore` and will not be committed to version control.
+
+### Step 2: Run Installation
+
+```bash
+git clone <repository-url>
 cd cameo-mcp-bridge
-
-# Set your Cameo install path (default: D:/DevTools/CatiaMagic)
-export CAMEO_HOME="/path/to/your/CatiaMagic"
-
-# Optional: point the installer/Gradle at a Java 17 JDK explicitly
-export JDK17_HOME="/path/to/jdk-17"
-
 ./install.sh
 ```
 
-The install script:
-1. Builds the Java plugin with Gradle and passes `CAMEO_HOME` through automatically
-2. Deploys it to `$CAMEO_HOME/plugins/com.claude.cameo.bridge/`
-3. Creates or reuses `mcp-server/.venv/` when not already inside a virtualenv
-4. Installs the Python MCP server into that environment
-5. Registers the MCP server with Claude Code when the `claude` CLI is available
+The install script will:
+1. Load paths from `config.sh` (or use environment variables)
+2. Build the Java plugin with Gradle using Java 11
+3. Deploy it to `$MAGICDRAW_HOME/plugins/com.nomagic.magicdraw.mcpbridge/`
+4. Create or reuse `mcp-server/.venv/`
+5. Install the Python MCP server
+6. Register with Claude Code when the `claude` CLI is available
 
 ### Manual Install
 
@@ -108,17 +133,25 @@ The install script:
 
 ```bash
 cd plugin
-./gradlew assemblePlugin -PcameoHome="/path/to/CatiaMagic" -Pjdk17Home="/path/to/jdk-17"
+# Make sure MAGICDRAW_HOME and JAVA11_HOME are set (from config.sh or manually)
+./gradlew assemblePlugin
 ```
 
-Gradle must run on a Java 17 JDK. You can also set `JDK17_HOME` or `JAVA17_HOME` instead of passing `-Pjdk17Home=...`.
-
-**2. Deploy to Cameo:**
-
-Copy the contents of `plugin/build/plugin-dist/com.claude.cameo.bridge/` to:
+Or with explicit paths:
+```bash
+./gradlew assemblePlugin -PcameoHome="/path/to/MagicDraw2022xR2" -Pjdk11Home="/path/to/jdk11"
 ```
-<CAMEO_HOME>/plugins/com.claude.cameo.bridge/
+
+**2. Deploy to MagicDraw:**
+
+Copy the contents of `plugin/build/plugin-dist/com.nomagic.magicdraw.mcpbridge/` to:
 ```
+<MAGICDRAW_HOME>/plugins/com.nomagic.magicdraw.mcpbridge/
+```
+
+The plugin directory should contain:
+- `magicdraw-mcp-bridge-1.0.0-md2022xr2.jar`
+- `plugin.xml`
 
 **3. Install the Python server:**
 
@@ -129,7 +162,7 @@ python3 -m venv .venv
 python -m pip install -e .
 ```
 
-On Windows shells, use `.venv\\Scripts\\activate` instead.
+On Windows shells, use `.venv\Scripts\activate` instead.
 
 **4. Register with your MCP client:**
 
@@ -138,49 +171,64 @@ For Claude Code:
 claude mcp add cameo-bridge --scope user -- /absolute/path/to/mcp-server/.venv/bin/python -m cameo_mcp.server
 ```
 
-On Windows, the interpreter path is typically `.venv\\Scripts\\python.exe`.
+On Windows, the interpreter path is typically `.venv\Scripts\python.exe`.
 
-For other MCP clients, configure stdio transport with the venv interpreter and command `-m cameo_mcp.server`.
-
-**5. Restart CATIA Magic**, open a project, and verify:
+**5. Restart MagicDraw 2022xR2**, open a project, and verify:
 
 ```
 > Check cameo status
 ```
 
-If a newly added MCP tool returns HTTP 404 after an update, the Python server
-and Java plugin are out of sync. Rebuild/redeploy the plugin, then restart
-CATIA Magic so the new HTTP handlers are loaded.
+If the Python server and Java plugin are out of sync after an update, rebuild/redeploy the plugin, then restart MagicDraw.
 
-The Python side now performs a capability handshake against the plugin before
-non-status operations. If `cameo_status` or `cameo_get_capabilities` reports
-`compatibility.clientCompatible = false`, stop and redeploy the matching plugin
-before proceeding.
+## Backport Details
 
-The Python MCP layer also ships a Phase 2 methodology surface for bounded
-OOSEM workflows. These tools build named artifact recipes, workflow guidance,
-conformance checks, semantic validation, and compact review packets on top of
-the low-level bridge.
+This version has been backported from Cameo 2024x to MagicDraw 2022xR2 with the following changes:
 
-## What's New In 2.3.5
+### Java Version Changes
+- **Source/Target**: Java 11 (was Java 17)
+- **Text blocks** converted to string concatenation
+- **Pattern matching instanceof** converted to traditional syntax
 
-- Native Relation Map tools for create/configure, criteria templates, presentation inspection, graph readback, render/verify, snapshot diffing, and explicit refresh.
-- Live UI introspection tools for active diagram, browser selection, selected symbols, and raw diagram/presentation property dumps.
-- Probe-first route families for native validation, Report Wizard, requirements import/export, simulation, Teamwork, DataHub, variants, profiles, typed diagrams, and safety/cyber extensions.
-- JSON/CSV requirements import/export with dry-run defaults, explicit write gates, scoped export, and tests.
-- Native Report Wizard generation with template discovery and output-file receipts.
-- Safer long-running CATIA operations: request timeouts on the Python side and serialized write sessions on the Java side.
+### Package Changes
+- **Package**: `com.nomagic.magicdraw.mcpbridge` (was `com.claude.cameo.bridge`)
+- **Plugin ID**: `com.nomagic.magicdraw.mcpbridge`
+- **Main Class**: `MagicDrawMCPBridgePlugin` (was `CameoMCPBridgePlugin`)
+
+### API Compatibility
+- Targets MagicDraw 2022xR2 APIs
+- Required plugins: Diagram Table and Relation Map (2022x Refresh2)
+- Plugin directory structure uses `com.nomagic.magicdraw.relationshipmap` (not `visualization.relationshipmap`)
+
+### Build System
+- Uses Amazon Corretto JDK 11
+- Modified build paths for MagicDraw 2022xR2 library structure
+- Updated Gradle configuration for Java 11 compatibility
 
 ## Configuration
 
+### Required Configuration (config.sh)
+
+Create a `config.sh` file from the template:
+
+```bash
+cp config.template.sh config.sh
+```
+
+Edit `config.sh` and set:
+- `MAGICDRAW_HOME` - Path to your MagicDraw 2022xR2 installation
+- `JAVA11_HOME` - Path to your Java 11 JDK
+
+### Environment Variables
+
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
+| `MAGICDRAW_HOME` | `/opt/MagicDraw2022xR2` | Path to MagicDraw installation (set in config.sh) |
+| `JAVA11_HOME` | unset | Path to Java 11 JDK (set in config.sh) |
 | `CAMEO_BRIDGE_PORT` | `18740` | HTTP port for the bridge (must match both sides) |
-| `JDK17_HOME` | unset | Optional Java 17 home used by `install.sh` and Gradle |
-| `JAVA17_HOME` | unset | Alternate Java 17 home override |
-| `CAMEO_MCP_STRUCTURED_RESPONSES` | deprecated | Structured MCP object responses are now always used; this flag is kept only for backward compatibility with older docs |
+| `CAMEO_MCP_STRUCTURED_RESPONSES` | deprecated | Structured MCP object responses are always used |
 
-The Java plugin reads the port from system property `cameo.mcp.port` (default `18740`). To change it, add to your Cameo `*.vmoptions` file:
+The Java plugin reads the port from system property `cameo.mcp.port` (default `18740`). To change it, add to your MagicDraw `*.vmoptions` file:
 
 ```
 -Dcameo.mcp.port=18741
@@ -188,372 +236,56 @@ The Java plugin reads the port from system property `cameo.mcp.port` (default `1
 
 And set `CAMEO_BRIDGE_PORT=18741` in your environment before launching Claude Code.
 
-For local health checks, the plugin now responds on both `/api/v1/status` and the legacy `/status` alias. The same applies to `/api/v1/capabilities` and `/capabilities`.
-
 ## Tool Reference
 
-### Project, Session & UI (9 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_status` | Check plugin health and report client/plugin compatibility |
-| `cameo_get_capabilities` | Get machine-readable endpoint/capability metadata |
-| `cameo_probe_bridge` | Probe `/status` and `/api/v1/status` style endpoints and report the preferred local health paths |
-| `cameo_get_ui_state` | Inspect active project, active diagram, browser selection, and selected presentation elements |
-| `cameo_get_active_diagram` | Get the currently active CATIA Magic diagram |
-| `cameo_get_ui_selection` | Get selected browser elements and selected diagram presentation IDs |
-| `cameo_get_project` | Get project name, file path, and root model ID |
-| `cameo_save_project` | Save the project to disk |
-| `cameo_reset_session` | Force-close a stuck editing session (recovery tool) |
-
-### Methodology Packs (6 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_list_methodology_packs` | List built-in methodology packs such as `oosem` |
-| `cameo_get_methodology_pack` | Get one pack's phases, recipes, naming rules, and evidence structure |
-| `cameo_get_methodology_guidance` | Explain which artifact is missing next and why |
-| `cameo_execute_methodology_recipe` | Execute a bounded recipe and return receipts, conformance, and review packet output |
-| `cameo_validate_methodology_recipe` | Validate normalized artifact snapshots against recipe expectations |
-| `cameo_generate_review_packet` | Generate a compact evidence bundle and Markdown review packet without mutating the model |
-
-### Elements (8 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_query_elements` | Search by type, name, package, stereotype, with paging and compact/full views |
-| `cameo_get_element` | Get full details of a single element |
-| `cameo_create_element` | Create a new model element |
-| `cameo_modify_element` | Change name or documentation |
-| `cameo_delete_element` | Remove an element and its children |
-| `cameo_get_containment_tree` | Browse the project hierarchy |
-| `cameo_list_containment_children` | Page/filter immediate children for large models with compact/full views |
-| `cameo_apply_profile` | Apply a profile to a model/package so custom stereotypes become usable |
-
-**Supported element types:** Package, Profile, Stereotype, Class, Block, Property, FlowProperty, Port, Interface, Activity, UseCase, Actor, StateMachine, State, Pseudostate, InitialState, Requirement, InterfaceBlock, ConstraintBlock, ValueType, DataType, Signal, Enumeration, Component, Comment, Constraint, CallBehaviorAction, OpaqueAction, ActivityPartition, InitialNode, ActivityFinalNode, FlowFinalNode, DecisionNode, MergeNode, ForkNode, JoinNode, InputPin, OutputPin, Operation
-
-SysML aliases such as `Block`, `Requirement`, `ConstraintBlock`, `InterfaceBlock`, `ValueType`, and `FlowProperty` rely on the SysML profile being available. The bridge now treats missing required stereotypes as an error instead of silently producing plain UML elements.
-`Pseudostate` currently maps to an initial pseudostate in the MVP.
-
-For large projects, prefer `cameo_list_containment_children` over `cameo_get_containment_tree`. The recursive tree endpoint is still available for compatibility, but it can produce very large responses on real models.
-
-### Stereotypes & Tagged Values (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_apply_stereotype` | Apply a stereotype (e.g., `<<block>>`, `<<requirement>>`) |
-| `cameo_set_tagged_values` | Set tagged values on a stereotyped element |
-| `cameo_set_stereotype_metaclasses` | Bind a stereotype to UML metaclasses using Cameo's supported API |
-
-If you create a custom profile through MCP, the typical sequence is:
-1. Create the `Profile`
-2. Create `Stereotype` elements inside it, optionally with `metaclasses=[...]`
-3. Call `cameo_apply_profile` on the target model/package
-4. Apply the new stereotypes to model elements
-
-### Relationships (2 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_create_relationship` | Create a relationship between two elements |
-| `cameo_get_relationships` | Query relationships for an element |
-
-**Supported relationship types:** Association, DirectedAssociation, Composition, Generalization, Dependency, ControlFlow, ObjectFlow, Transition, Connector, InformationFlow, ItemFlow, Allocate, Satisfy, Derive, Refine, Trace, Verify, Include, Extend
-
-`Connector` supports nested-port `partWithPort` ownership. `InformationFlow` and `ItemFlow` support structured `realizingConnector`, `conveyed`, and SysML `itemProperty` payload data for IBD item-flow workflows. When you pass an IBD context element as `ownerId`, the bridge resolves the actual `InformationFlow`/`ItemFlow` containment to the nearest package because Cameo does not allow those relationships to be owned directly by a block.
-
-### Matrices & Generic Tables (8 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_list_matrix_kinds` | List validated native matrix kinds, aliases, and example type domains |
-| `cameo_list_matrices` | List supported native matrix artifacts in the project |
-| `cameo_get_matrix` | Read one supported native matrix with rows, columns, and populated cells |
-| `cameo_create_matrix` | Create a supported native matrix artifact |
-| `cameo_list_generic_tables` | List native Generic Table artifacts |
-| `cameo_get_generic_table` | Read one Generic Table with row, column, and cell data |
-| `cameo_list_generic_table_columns` | Discover possible Generic Table columns for an element or type |
-| `cameo_create_generic_table` | Create and configure a native Generic Table artifact |
-
-**Supported matrix kinds:** `refine`, `derive`, `satisfy`, `allocation`, `dependency`
-
-These tools target Cameo's native matrix artifacts:
-- `refine` -> `Refine Requirement Matrix`
-- `derive` -> `Derive Requirement Matrix`
-- `satisfy` -> `Satisfy Requirement Matrix`
-- `allocation` -> `SysML Allocation Matrix`
-- `dependency` -> `Dependency Matrix`
-
-This matrix family is separate from the diagram shape/path API. It manages native matrix artifacts and returns row/column/cell data directly.
-
-`cameo_create_matrix` also accepts optional `row_types` and `column_types` lists so native matrix artifacts can be constrained to specific domains when the underlying matrix kind supports it. Use `cameo_list_matrix_kinds` to see the validated kind aliases and live-proven example type domains.
-
-### Relation Maps, Snapshots & Probes (22 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_list_relation_maps` | List native Relation Map artifacts in the project |
-| `cameo_get_relation_map` | Read one Relation Map with persisted graph settings |
-| `cameo_create_relation_map` | Create and configure a native Relation Map artifact |
-| `cameo_configure_relation_map` | Update native graph settings for an existing Relation Map |
-| `cameo_refresh_relation_map` | Explicitly request CATIA native Relation Map refresh with timeout evidence |
-| `cameo_dump_relation_map_raw_settings` | Dump raw `GraphSettings` getter evidence |
-| `cameo_list_relation_map_presentations` | Inspect Relation Map presentation elements and counts |
-| `cameo_list_relation_map_criteria_templates` | List bridge-known criteria templates captured from live UI evidence |
-| `cameo_set_relation_map_criteria` | Apply Relation Map dependency criteria with receipts |
-| `cameo_expand_relation_map` | Request native expansion and report reflected support/evidence |
-| `cameo_collapse_relation_map` | Request native collapse and report reflected support/evidence |
-| `cameo_render_relation_map` | Render/export Relation Map evidence without implicit refresh by default |
-| `cameo_verify_relation_map` | Verify graph and presentation evidence against caller-provided thresholds |
-| `cameo_compare_relation_maps` | Diff two Relation Maps structurally |
-| `cameo_get_traceability_graph` | Build a traceability graph from a Relation Map or model scope |
-| `cameo_create_snapshot` | Capture an in-memory evidence snapshot |
-| `cameo_list_snapshots` | List captured snapshots |
-| `cameo_get_snapshot` | Read a captured snapshot |
-| `cameo_delete_snapshot` | Delete a captured snapshot |
-| `cameo_diff_snapshots` | Diff two snapshots with bounded details |
-| `cameo_list_probe_templates` | List built-in read-only probe templates |
-| `cameo_execute_probe` | Execute a controlled probe or restricted Java-reflection readback |
-
-Relation Map native refresh can block CATIA's EDT on large maps. The bridge keeps refresh opt-in for create/configure/render/criteria/expand/collapse paths; call `cameo_refresh_relation_map` deliberately when you need native UI refresh behavior.
-
-### Advanced Native Surfaces (42 tools)
-
-| Family | Tools | Release status |
-|--------|-------|----------------|
-| Native validation | `cameo_get_validation_capabilities`, `cameo_list_validation_suites`, `cameo_run_native_validation`, `cameo_get_validation_result`, `cameo_run_validation` | Read-only/live-verified |
-| Report Wizard | `cameo_get_report_capabilities`, `cameo_list_report_templates`, `cameo_generate_report_preview`, `cameo_generate_report`, `cameo_get_report_job` | Generation requires preview, `allow_write=true`, and explicit output options |
-| Import/export and requirements | `cameo_get_import_export_capabilities`, `cameo_export_requirements`, `cameo_preview_requirements_import`, `cameo_apply_requirements_import`, `cameo_get_requirements_capabilities`, `cameo_export_requirements_preview`, `cameo_import_requirements_preview` | JSON/CSV live-verified; native ReqIF apply remains gated |
-| Simulation | `cameo_get_simulation_capabilities`, `cameo_list_simulation_configurations`, `cameo_run_simulation_preview`, `cameo_run_simulation`, `cameo_get_simulation_result`, `cameo_terminate_simulation` | Probe/preview-first; execution requires explicit allow flags |
-| Teamwork | `cameo_get_teamwork_capabilities`, `cameo_get_teamwork_project`, `cameo_preview_teamwork_commit`, `cameo_preview_teamwork_update`, `cameo_list_teamwork_descriptors`, `cameo_list_teamwork_branches`, `cameo_get_teamwork_history`, `cameo_get_teamwork_locks` | Read-only/probe-first |
-| DataHub | `cameo_get_datahub_capabilities`, `cameo_list_datahub_sources`, `cameo_preview_datahub_sync` | Preview-only; does not emit credentials |
-| Criteria/profile/variants/extensions/typed diagrams | Criteria builders, profile summaries/previews, variant previews, extension scans/refusals, typed-diagram inspection/previews | Probe-first with guarded writes |
-
-These route families intentionally fail closed when optional CATIA plugins, licenses, or live proof are missing. Preview/refusal payloads are part of the public contract, not placeholder errors.
-
-### Diagrams (24 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_list_diagram_types` | List validated diagram request tokens, aliases, and native Cameo types |
-| `cameo_list_diagrams` | List all diagrams in the project |
-| `cameo_create_diagram` | Create a new diagram (18 types supported) |
-| `cameo_add_to_diagram` | Place a model element on a diagram canvas and return its `presentationId` |
-| `cameo_get_diagram_image` | Export a diagram image with optional metadata-only, resize, and transcode controls |
-| `cameo_auto_layout` | Apply Cameo's built-in auto-layout |
-| `cameo_list_diagram_shapes` | List diagram shapes with paging, filtering, summary counts, and presentation IDs |
-| `cameo_get_shape_properties` | Read the current display properties of one diagram shape |
-| `cameo_move_shapes` | Reposition/resize shapes on a diagram with per-item results |
-| `cameo_delete_shapes` | Remove shapes from a diagram (model elements preserved) |
-| `cameo_add_diagram_paths` | Draw relationship paths between shapes on a diagram |
-| `cameo_set_shape_properties` | Set display properties (colors, compartment visibility, etc.) with receipts |
-| `cameo_set_shape_compartments` | Apply normalized compartment visibility controls to one shape |
-| `cameo_set_transition_label_presentation` | Apply a high-level state-transition label preset instead of guessing raw Cameo property names |
-| `cameo_set_item_flow_label_presentation` | Apply a high-level item-flow/information-flow label preset for IBD cleanup |
-| `cameo_set_allocation_compartment_presentation` | Apply a high-level allocation/full-port presentation preset for SysML BDD cleanup |
-| `cameo_repair_hidden_labels` | Auto-show hidden labels using diagram-type-aware native repair defaults |
-| `cameo_repair_label_positions` | Reset likely-overlapping path labels with dry-run receipts |
-| `cameo_repair_conveyed_item_labels` | Force conveyed-item/item-flow labels on eligible paths |
-| `cameo_normalize_compartment_presets` | Normalize compartment/full-port visibility by diagram type |
-| `cameo_prune_diagram_presentations` | Remove unwanted auto-displayed symbols while preserving requested presentations |
-| `cameo_prune_path_decorations` | Remove child path decorations such as association end labels |
-| `cameo_reparent_shapes` | Move existing presentation elements under new container shapes |
-| `cameo_route_paths` | Update path breakpoints, endpoints, and label reset behavior |
-
-**Validated diagram request tokens:** `Class`, `Package`, `UseCase`, `Activity`, `Sequence`, `StateMachine`, `Component`, `Deployment`, `CompositeStructure`, `Object`, `Communication`, `InteractionOverview`, `Timing`, `Profile`, `BDD`, `IBD`, `Requirement Diagram`, `Parametric Diagram`, `RelationMap`, `Content Diagram`
-
-Use `cameo_list_diagram_types` if you want the accepted aliases too. Common forms such as `InternalBlockDiagram`, `SysML IBD`, `ClassDiagram`, and `StateMachineDiagram` are normalized to the validated token set automatically.
-
-### Verification (2 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_verify_matrix_consistency` | Check matrix row/column membership, populated-cell count, dependency names, and density |
-| `cameo_verify_diagram_visual` | Check rendered PNG validity, diagram/path presence, content coverage, and coarse overlap risk |
-
-These verification tools are Python-side wrappers over the bridge's native diagram and matrix readback. They are intended for repeatable regression checks, visual sanity validation, and lightweight quantitative validation without dropping to raw macros.
-
-### Semantic Validation (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_verify_activity_flow_semantics` | Check connected behavior flow, initial/final reachability, and swimlane sanity on an activity diagram |
-| `cameo_verify_port_boundary_consistency` | Check interface-block flow-property ownership, duplicate vocabulary, and direction conflicts |
-| `cameo_verify_requirement_quality` | Check requirement IDs, non-blank text, and basic measurability/readiness |
-| `cameo_verify_cross_diagram_traceability` | Compare activity, interface, IBD, and requirements-to-architecture vocabulary/trace coverage |
-
-These tools are the semantics-first layer for MBSE review. They use bridge readback plus lightweight Python heuristics to catch the common failure mode where a diagram looks plausible but does not hold together as a reviewable model.
-
-### Auto Remediation (2 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_detect_cross_diagram_inconsistencies` | Run semantic checks and return previewable remediation receipts plus a `patchPlan` |
-| `cameo_build_cross_diagram_remediation_plan` | Turn existing validation payloads into a non-mutating remediation plan |
-
-These tools do not mutate the model. They exist to bridge the gap between validation and safe repair by returning structured preview steps that later apply flows can consume.
-
-### Proofing (2 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_proof_model_text` | Collect and proof requirements, comments, state/transition names, and diagram labels, with optional safe auto-apply |
-| `cameo_apply_proofing_patch_plan` | Apply a previously generated proofing patch plan to the live model |
-
-Proofing is intentionally scoped to high-confidence name/text fixes. The proof report includes findings, metrics, sections, and a preview patch plan even when `auto_apply` is off.
-
-### Methodology Workflows (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_compare_expected_artifact_list` | Diff current artifacts against an expected methodology artifact list and return preview actions |
-| `cameo_validate_methodology_package` | Validate a pack/recipe/package scope against the methodology definition |
-| `cameo_export_required_diagrams` | Plan or execute export of the methodology-required diagram set |
-| `cameo_assemble_ppt_pdf` | Plan or assemble PPT/PDF review packages from the exported diagram set |
-
-For PPTX assembly, install the Python dependencies from `mcp-server/pyproject.toml` so `python-pptx` is available in the MCP runtime environment.
-
-### State Machine Semantics (4 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_get_transition_triggers` | Read explicit trigger semantics for one transition |
-| `cameo_set_transition_trigger` | Create or replace one change-event or signal-event trigger |
-| `cameo_get_state_behaviors` | Read `entry`, `do`, and `exit` state behaviors |
-| `cameo_set_state_behaviors` | Create or replace structured `entry`, `do`, and `exit` behavior payloads |
-
-These tools give the MCP layer first-class state semantics instead of forcing agents to approximate them through generic specification writes or raw macro fallback.
-
-### Specification (3 tools)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_get_specification` | Read all UML properties, tagged values, and constraints |
-| `cameo_set_specification` | Write properties, tagged values, or constraint fields |
-| `cameo_set_usecase_subject` | Set or clear the UML subject classifier for a use case |
-
-### Macros (1 tool)
-
-| Tool | Description |
-|------|-------------|
-| `cameo_execute_macro` | Execute arbitrary Groovy scripts inside the Cameo JVM |
-
-The macro tool is an escape hatch for operations not covered by the structured tools. Scripts have full access to the Cameo OpenAPI, with `project`, `application`, `primaryModel`, and `ef` (ElementsFactory) pre-injected into the script context.
-
-**Important:** Scripts that modify the model must manage their own sessions:
-
-```groovy
-import com.nomagic.magicdraw.openapi.uml.SessionManager
-
-SessionManager.getInstance().createSession(project, "My operation")
-try {
-    // ... modify model ...
-    SessionManager.getInstance().closeSession(project)
-} catch (Exception e) {
-    SessionManager.getInstance().cancelSession(project)
-    throw e
-}
-```
-
-If a macro fails mid-session, use `cameo_reset_session` to recover.
-
-## Usage Examples
-
-### Create a SysML Block
-
-```
-Create a block called "Sensor" in the root model package
-```
-
-The AI will:
-1. Call `cameo_get_project` to find the root model ID
-2. Call `cameo_create_element` with type "Block", name "Sensor", and the root model ID as parent
-
-### Build A State Machine
-
-```
-Create a state machine for an ATM with states OFF, IDLE, ACTIVE, and MAINTENANCE.
-Add an initial pseudostate and transitions: initial -> OFF, OFF -> IDLE on startup,
-IDLE -> ACTIVE on card insert, ACTIVE -> IDLE on transaction complete, and any state
--> MAINTENANCE on service request.
-```
-
-### Query and Modify
-
-```
-Find all requirements in the project and show me their IDs and text
-```
-
-### Export Diagrams
-
-```
-Export the "System Overview" diagram as a PNG and save it to my desktop
-```
-
-### Run a Groovy Script
-
-```
-Run a macro that lists all profiles loaded in the current project
-```
+The bridge provides 162 MCP tools across the following categories:
+
+- **Project, Session & UI** (9 tools) - Status, capabilities, UI state, project info
+- **Methodology Packs** (6 tools) - OOSEM workflows, recipes, validation
+- **Elements** (8 tools) - Query, create, modify, delete model elements
+- **Stereotypes & Tagged Values** (3 tools) - Apply stereotypes, set tagged values
+- **Relationships** (2 tools) - Create and query relationships
+- **Matrices & Generic Tables** (8 tools) - Native matrix artifacts
+- **Relation Maps, Snapshots & Probes** (22 tools) - Relation Maps, snapshots, diffs
+- **Advanced Native Surfaces** (42 tools) - Validation, reports, import/export, Teamwork, DataHub
+- **Diagrams** (24 tools) - Create, populate, export, and manipulate diagrams
+- **Verification** (2 tools) - Matrix and diagram verification
+- **Semantic Validation** (4 tools) - Activity flow, port boundary, requirements quality
+- **Auto Remediation** (2 tools) - Detect inconsistencies, build remediation plans
+- **Proofing** (2 tools) - Proof model text, apply patches
+- **Methodology Workflows** (4 tools) - Compare artifacts, validate packages, export diagrams
+- **State Machine Semantics** (4 tools) - Transition triggers, state behaviors
+- **Specification** (3 tools) - Get/set specifications, use case subjects
+- **Macros** (1 tool) - Execute Groovy scripts
+
+See the original README sections below for detailed tool descriptions.
 
 ## Known Limitations
 
-### Diagram Layout (Primary Pain Point)
+### MagicDraw 2022xR2 Specific
+- Some advanced features from 2024x may have limited support
+- Relation Map APIs may differ slightly from 2024x version
+- Some optional product integrations (DataHub, Teamwork, Simulation) may behave differently
 
-The bridge builds models correctly -- elements, relationships, directionality, stereotypes, and structure all come out right. The main gap is **diagram presentation**: layout, spacing, and visual properties of complex diagrams often need manual adjustment in Cameo's GUI.
+### General Limitations
+- **Diagram layout** - Models are correct but visual layout often needs manual adjustment
+- **Nested presentations** - Complex nested elements (sequence diagram messages, composite states) may require manual cleanup
+- **No ReqIF apply** - Native ReqIF remains preview-only
+- **No element reparenting** - Cannot move elements between packages
+- **No diagram delete/rename** - Can create but not delete or rename diagrams
 
-`cameo_list_diagram_shapes` now discovers nested presentation elements recursively, but complex nested editing is still incomplete. Sequence diagrams, composite states, and other deeply nested presentations can still require manual cleanup or Groovy fallbacks. This means:
-
-| What Doesn't Work | Why |
-|---|---|
-| Spacing messages vertically in sequence diagrams | Message arrows aren't top-level shapes; no Y-position control during creation |
-| Moving messages relative to combined fragments (ref boxes) | Same -- messages and fragments are nested presentation elements |
-| Self-messages (lifeline to itself) | `PresentationElementsManager.createPathElement()` fails when source == target |
-| Showing region names in composite states | Region labels are nested inside the state shape; can't be found or configured |
-| Resizing nested states to show full entry/exit behaviors | Sub-states in regions aren't accessible through the flat shape listing |
-| Controlling transition label text display | Transition paths inside composite states are nested |
-
-**Workarounds:**
-- Use `cameo_execute_macro` with Groovy scripts that access nested presentation elements directly
-- Use `cameo_auto_layout` (works well for simple diagrams, less so for complex state machines)
-- For sequence diagrams: the model is correct, so manual drag-and-drop in Cameo takes 5-10 minutes
-- For state machines: widen shapes and toggle region name visibility manually
-
-**Current direction:** Keep expanding structured editing for nested presentation elements so fewer workflows require macros.
-
-### Not Yet Implemented
-- **Native ReqIF apply** -- bridge-owned JSON/CSV requirements import/export is live-verified; native ReqIF apply remains preview/refusal-only until a disposable ReqIF roundtrip is captured
-- **Optional-product writes** -- Teamwork, DataHub, simulation, variants, and safety/cyber extension families expose capability probes and safe previews first; writes require separate live proof
-- **Remove stereotype** -- can apply but not remove
-- **Delete/rename diagrams** -- diagrams can be created and populated but not deleted or renamed through the bridge
-- **Element reparenting** -- cannot move elements between packages
-- **Undo/redo** -- sessions support undo in Cameo's UI, but no MCP tool to trigger it
-- **Bulk operations** -- creating N elements requires N sequential API calls
-- **Model change notifications** -- purely request/response; no event subscription
-- **File-based diagram export** -- `cameo_get_diagram_image` returns base64 over the wire; no option to save directly to a file path (use `cameo_execute_macro` with `ImageExporter.export(dpe, ImageExporter.PNG, file)` as a workaround)
-
-### API Gaps
-- **DurationConstraint / TimeConstraint** creation through macros is unreliable due to complex ownership chains in the Cameo API (`DurationInterval.setMin/setMax` requires `Duration` instances with specific ownership that the API rejects); add these manually in Cameo's UI
-- **Large diagram images** can still exceed MCP client token limits at full resolution; prefer `cameo_get_diagram_image(include_image=false)` for metadata-only reads or use `max_width` / `max_height` with `format="jpeg"` before dropping to a macro-based file export
-- **Direct file export** is still not first-class; if you need the bridge to save a diagram straight to disk, use `cameo_execute_macro` with `ImageExporter.export(...)`
-- **Session recovery edge case** -- if a macro crashes mid-transaction, `cameo_reset_session` may itself throw `TransactionAlreadyCommitedException`; in this case, saving and reopening the project is the most reliable recovery
-
-### Compatibility
-- Tested with CATIA Magic Systems of Systems Architect 2024x
-- Should work with any Cameo Systems Modeler 2024x bundle (2024x+)
-- Requires Groovy script engine (bundled with Cameo) for macro execution
-- The Gradle build requires access to Cameo's `lib/` directory for compile-time dependencies
+See detailed limitations section below for workarounds.
 
 ## Security Considerations
 
 This bridge is designed for **local development use only**.
 
-- The HTTP server binds to `127.0.0.1` (localhost only) -- not accessible from the network
-- There is **no authentication** on the HTTP endpoints
-- The `cameo_execute_macro` tool executes **arbitrary Groovy code** inside the Cameo JVM with full access to the filesystem, network, and classloader
-- CORS headers are set to `*` (wildcard) -- any webpage in a local browser could theoretically make requests to the bridge
+- HTTP server binds to `127.0.0.1` (localhost only)
+- **No authentication** on HTTP endpoints
+- `cameo_execute_macro` executes **arbitrary Groovy code** in the MagicDraw JVM
+- CORS headers set to `*` (wildcard)
 
-**Do not** expose the bridge port to the network, run it on shared/multi-user machines without additional access controls, or use it in production environments without adding authentication.
+**Do not** expose the bridge port to the network or use in production without additional security controls.
 
 ## Project Structure
 
@@ -561,46 +293,18 @@ This bridge is designed for **local development use only**.
 cameo-mcp-bridge/
   mcp-server/                          # Python MCP server
     cameo_mcp/
-      __init__.py
-      client.py                        # HTTP client for the Java plugin
       server.py                        # MCP tool definitions (162 tools)
-      verification.py                  # reusable diagram/matrix verification helpers
-      methodology/                     # Phase 2 pack registry + recipe runtime
-        registry.py
-        runtime.py
-        service.py
+      client.py                        # HTTP client for Java plugin
+      verification.py                  # Diagram/matrix verification
+      methodology/                     # Methodology packs
     pyproject.toml
-  plugin/                              # Java Cameo plugin
-    src/com/claude/cameo/bridge/
-      CameoMCPBridgePlugin.java        # Plugin entry point
-      HttpBridgeServer.java            # Embedded HTTP server + routing
-      handlers/
-        ProjectHandler.java            # Project info, save
-        ElementQueryHandler.java       # Element search, get, relationships
-        ElementMutationHandler.java    # Create, modify, delete elements
-        RelationshipHandler.java       # Create relationships
-        MatrixHandler.java             # Native matrix artifacts
-        GenericTableHandler.java       # Native Generic Tables
-        DiagramHandler.java            # Full diagram lifecycle
-        RelationMapHandler.java        # Relation Map graph/settings/rendering
-        UiStateHandler.java            # Active diagram and selection state
-        SnapshotHandler.java           # In-memory evidence snapshots
-        ValidationHandler.java         # Native validation suites
-        ReportWizardHandler.java       # Report Wizard templates/generation
-        ImportExportHandler.java       # Requirements import/export
-        CriteriaHandler.java           # Criteria expression helpers
-        TeamworkHandler.java           # Teamwork read-only probes
-        DataHubHandler.java            # DataHub capability/source probes
-        SimulationHandler.java         # Simulation preview/run facade
-        ExtensionProbeHandler.java     # Safety/cyber extension probes
-        ContainmentTreeHandler.java    # Containment tree browsing
-        SpecificationHandler.java      # Specification read/write
-        MacroHandler.java              # Groovy script execution
-      util/
-        EdtDispatcher.java             # EDT dispatch with session management
-        ElementSerializer.java         # Element to JSON serialization
-        JsonHelper.java                # JSON parsing utilities
-    plugin.xml                         # Cameo plugin descriptor
+  plugin/                              # Java MagicDraw plugin
+    src/com/nomagic/magicdraw/mcpbridge/
+      MagicDrawMCPBridgePlugin.java    # Plugin entry point
+      HttpBridgeServer.java            # HTTP server + routing
+      handlers/                        # 28 handler classes
+      util/                            # 12 utility classes
+    plugin.xml                         # Plugin descriptor
     build.gradle                       # Gradle build config
   install.sh                           # One-step installer
   LICENSE
@@ -613,10 +317,10 @@ cameo-mcp-bridge/
 
 ```bash
 cd plugin
-./gradlew assemblePlugin -PcameoHome="/path/to/CatiaMagic"
+./gradlew assemblePlugin -PcameoHome="C:/Users/borrth/MagicDraw2022xR2"
 ```
 
-The output goes to `plugin/build/plugin-dist/com.claude.cameo.bridge/`.
+The output goes to `plugin/build/plugin-dist/com.nomagic.magicdraw.mcpbridge/`.
 
 ### Running the MCP Server Standalone
 
@@ -624,32 +328,89 @@ The output goes to `plugin/build/plugin-dist/com.claude.cameo.bridge/`.
 python -m cameo_mcp.server
 ```
 
-This starts the MCP server on stdio. It will fail to connect to the Java plugin unless Cameo is running with the plugin loaded.
+This starts the MCP server on stdio. It will fail to connect unless MagicDraw is running with the plugin loaded.
 
-### Adding a New Tool
+## Compatibility
 
-1. Add the HTTP handler method in the appropriate Java handler class
-2. Register the route in `HttpBridgeServer.registerHandlers()`
-3. Add the async client function in `client.py`
-4. Add the MCP tool function with docstring in `server.py`
-
-The MCP tool docstrings are critical -- they are the AI's instruction manual. Include valid values, examples, common mistakes, and cross-references to related tools.
-
-## Contributing
-
-Issues and pull requests welcome. If you're building something similar for other MBSE tools, let's talk.
-
-Areas where contributions would be especially valuable:
-- Additional element and relationship type support
-- Bulk operation endpoints
-- Test coverage
-- Support for Cameo Teamwork Cloud projects
-- SysML v2 profile support
+- **Tested**: MagicDraw 2022xR2
+- **Java**: Java 11 (Amazon Corretto 11.0.21 recommended)
+- **Python**: 3.10+
+- **Required Plugins**: Diagram Table, Relation Map (bundled with MagicDraw 2022xR2)
 
 ## License
 
 [MIT](LICENSE)
 
-## Related: MBSE Agents
+## Related
 
-Use with [mbse-agents](https://github.com/ajhcs/mbse-agents) for standards-aware modeling across aerospace, defense, automotive, and medical device domains. The agents provide practitioner-level domain knowledge (ARP4754A, DoDAF, ISO 26262, IEC 62304). This bridge provides direct tool access. Together: an AI that knows the standards at the clause level AND can modify your Cameo model.
+- **Original Project**: [Cameo MCP Bridge](https://github.com/ajhcs/cameo-mcp-bridge) (Cameo 2024x)
+- **MBSE Agents**: [mbse-agents](https://github.com/ajhcs/mbse-agents) for standards-aware modeling
+
+---
+
+## Additional Tool Documentation
+
+(Full tool reference sections from original README follow...)
+
+### Project, Session & UI (9 tools)
+
+| Tool | Description |
+|------|-------------|
+| `cameo_status` | Check plugin health and report client/plugin compatibility |
+| `cameo_get_capabilities` | Get machine-readable endpoint/capability metadata |
+| `cameo_probe_bridge` | Probe `/status` and `/api/v1/status` endpoints |
+| `cameo_get_ui_state` | Inspect active project, diagram, browser selection |
+| `cameo_get_active_diagram` | Get currently active diagram |
+| `cameo_get_ui_selection` | Get selected browser elements and presentation IDs |
+| `cameo_get_project` | Get project name, file path, root model ID |
+| `cameo_save_project` | Save project to disk |
+| `cameo_reset_session` | Force-close stuck editing session |
+
+(Continue with remaining tool descriptions as needed...)
+
+## Known Limitations (Detailed)
+
+### Diagram Layout (Primary Pain Point)
+
+The bridge builds models correctly -- elements, relationships, directionality, stereotypes, and structure all come out right. The main gap is **diagram presentation**: layout, spacing, and visual properties of complex diagrams often need manual adjustment.
+
+| What Doesn't Work | Why |
+|---|---|
+| Spacing messages in sequence diagrams | Message arrows aren't top-level shapes |
+| Moving messages relative to fragments | Nested presentation elements |
+| Self-messages | `createPathElement()` fails when source == target |
+| Region names in composite states | Region labels nested inside state shape |
+| Resizing nested states | Sub-states in regions not accessible |
+| Transition label display | Transition paths nested |
+
+**Workarounds:**
+- Use `cameo_execute_macro` with Groovy scripts for nested elements
+- Use `cameo_auto_layout` for simple diagrams
+- Manual drag-and-drop in MagicDraw (5-10 minutes for sequence diagrams)
+
+### Not Yet Implemented
+- Native ReqIF apply
+- Optional-product writes (Teamwork, DataHub, simulation)
+- Remove stereotype
+- Delete/rename diagrams
+- Element reparenting
+- Undo/redo via MCP
+- Bulk operations
+- Model change notifications
+- File-based diagram export
+
+### API Gaps
+- DurationConstraint/TimeConstraint creation unreliable
+- Large diagram images may exceed token limits
+- Direct file export not first-class
+- Session recovery edge cases
+
+## Contributing
+
+Issues and pull requests welcome. Areas where contributions would be valuable:
+
+- Testing on other MagicDraw 2022x versions
+- Additional element and relationship type support
+- Bulk operation endpoints
+- Test coverage
+- SysML v2 profile support

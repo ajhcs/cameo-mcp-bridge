@@ -1,9 +1,20 @@
 #!/bin/bash
-# install.sh - Install the Cameo MCP Bridge
+# install.sh - Install the MagicDraw MCP Bridge
 set -euo pipefail
 
-CAMEO_HOME="${CAMEO_HOME:-D:/DevTools/CatiaMagic}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load configuration from config.sh if it exists
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+    echo "Loading configuration from config.sh..."
+    source "$SCRIPT_DIR/config.sh"
+else
+    echo "Warning: config.sh not found. Using environment variables or defaults."
+    echo "To configure, copy config.template.sh to config.sh and edit the paths."
+fi
+
+# Use MAGICDRAW_HOME from config, environment, or fall back to default
+CAMEO_HOME="${MAGICDRAW_HOME:-${CAMEO_HOME:-/opt/MagicDraw2022xR2}}"
 
 find_python() {
     if command -v python3 >/dev/null 2>&1; then
@@ -19,9 +30,14 @@ find_python() {
     return 1
 }
 
-find_java17_home() {
-    for candidate in "${JDK17_HOME:-}" "${JAVA17_HOME:-}" "${JAVA_HOME:-}"; do
+find_java11_home() {
+    for candidate in "${JDK11_HOME:-}" "${JAVA11_HOME:-}" "${JAVA_HOME:-}"; do
         if [ -n "${candidate:-}" ] && [ -x "$candidate/bin/java" ]; then
+            echo "$candidate"
+            return 0
+        fi
+        # Also check for .exe on Windows paths
+        if [ -n "${candidate:-}" ] && [ -x "$candidate/bin/java.exe" ]; then
             echo "$candidate"
             return 0
         fi
@@ -51,30 +67,30 @@ if ! PYTHON_BIN="$(find_python)"; then
     exit 1
 fi
 
-echo "=== Cameo MCP Bridge Installer ==="
+echo "=== MagicDraw MCP Bridge Installer ==="
 echo "CAMEO_HOME: $CAMEO_HOME"
 echo ""
 
 # Build the Java plugin
 echo "Building Java plugin..."
 cd "$SCRIPT_DIR/plugin"
-if GRADLE_JAVA_HOME="$(find_java17_home)"; then
+if GRADLE_JAVA_HOME="$(find_java11_home)"; then
     echo "Using Java from: $GRADLE_JAVA_HOME"
     JAVA_HOME="$GRADLE_JAVA_HOME" PATH="$GRADLE_JAVA_HOME/bin:$PATH" \
         ./gradlew -Dorg.gradle.java.home="$GRADLE_JAVA_HOME" assemblePlugin -PcameoHome="$CAMEO_HOME"
 else
-    echo "Warning: no explicit Java 17 home detected via JDK17_HOME/JAVA17_HOME/JAVA_HOME."
-    echo "Gradle will use the current PATH/JAVA_HOME. If the build fails, set JDK17_HOME."
+    echo "Warning: no explicit Java 11 home detected via JDK11_HOME/JAVA11_HOME/JAVA_HOME."
+    echo "Gradle will use the current PATH/JAVA_HOME. If the build fails, set JDK11_HOME."
     ./gradlew assemblePlugin -PcameoHome="$CAMEO_HOME"
 fi
 echo "Build complete."
 echo ""
 
-# Deploy to Cameo
-echo "Deploying plugin to Cameo..."
-mkdir -p "$CAMEO_HOME/plugins/com.claude.cameo.bridge"
-cp -r build/plugin-dist/com.claude.cameo.bridge/* "$CAMEO_HOME/plugins/com.claude.cameo.bridge/"
-echo "Plugin deployed to: $CAMEO_HOME/plugins/com.claude.cameo.bridge/"
+# Deploy to MagicDraw
+echo "Deploying plugin to MagicDraw..."
+mkdir -p "$CAMEO_HOME/plugins/com.nomagic.magicdraw.mcpbridge"
+cp -r build/plugin-dist/com.nomagic.magicdraw.mcpbridge/* "$CAMEO_HOME/plugins/com.nomagic.magicdraw.mcpbridge/"
+echo "Plugin deployed to: $CAMEO_HOME/plugins/com.nomagic.magicdraw.mcpbridge/"
 echo ""
 
 # Install Python MCP server
@@ -108,7 +124,7 @@ echo ""
 echo "=== Installation complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. Restart CATIA Magic"
+echo "  1. Restart MagicDraw 2022xR2"
 echo "  2. Open a project"
 echo "  3. Start a new Claude Code session"
 echo "  4. Say: 'Check cameo status'"

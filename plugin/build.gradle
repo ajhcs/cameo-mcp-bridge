@@ -4,19 +4,19 @@ plugins {
 
 def cameoHome = project.hasProperty('cameoHome')
     ? project.property('cameoHome')
-    : 'D:/DevTools/CatiaMagic'
+    : (System.getenv('MAGICDRAW_HOME') ?: System.getenv('CAMEO_HOME') ?: '/opt/MagicDraw2022xR2')
 
-def jdk17Home = project.hasProperty('jdk17Home')
-    ? project.property('jdk17Home')
-    : (System.getenv('JDK17_HOME') ?: System.getenv('JAVA17_HOME'))
+def jdk11Home = project.hasProperty('jdk11Home')
+    ? project.property('jdk11Home')
+    : (System.getenv('JAVA11_HOME') ?: System.getenv('JDK11_HOME'))
 
-sourceCompatibility = '17'
-targetCompatibility = '17'
+sourceCompatibility = '11'
+targetCompatibility = '11'
 
 sourceSets {
     main {
         java {
-            srcDirs = ['src/com']
+            srcDirs = ['src']
         }
     }
     test {
@@ -43,7 +43,7 @@ dependencies {
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['cmof-*.jar'])
     compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.dependencymatrix/dependencymatrix_api.jar")
     compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.diagramtable/diagramtable_api.jar")
-    compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.relationshipmap/relationshipmap_api.jar")
+    compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.visualization.relationshipmap/relationshipmap_api.jar")
 
     testImplementation files("${cameoHome}/lib/junit-4.13.2.jar")
     testImplementation fileTree(dir: "${cameoHome}/lib", include: ['gson-*.jar'])
@@ -52,22 +52,22 @@ dependencies {
 
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-Xlint:-deprecation', '-Xlint:-unchecked']
-    if (jdk17Home) {
+    if (jdk11Home) {
         options.fork = true
-        options.forkOptions.javaHome = file(jdk17Home)
+        options.forkOptions.javaHome = file(jdk11Home)
     }
-    options.release = 17
+    options.release = 11
 }
 
 tasks.withType(Test).configureEach {
-    if (jdk17Home) {
-        executable = file("${jdk17Home}/bin/java.exe").absolutePath
+    if (jdk11Home) {
+        executable = file("${jdk11Home}/bin/java.exe").absolutePath
     }
 }
 
 jar {
-    archiveBaseName = 'cameo-mcp-bridge'
-    archiveVersion = '2.3.5'
+    archiveBaseName = 'magicdraw-mcp-bridge'
+    archiveVersion = '1.0.0-md2022xr2'
     destinationDirectory = layout.buildDirectory.dir('libs')
 }
 
@@ -75,17 +75,17 @@ tasks.register('assemblePlugin', Copy) {
     dependsOn jar
     from('plugin.xml')
     from(jar.archiveFile)
-    into(layout.buildDirectory.dir('plugin-dist/com.claude.cameo.bridge'))
+    into(layout.buildDirectory.dir('plugin-dist/com.nomagic.magicdraw.mcpbridge'))
 }
 
 tasks.register('deploy', Copy) {
     dependsOn assemblePlugin
-    from(layout.buildDirectory.dir('plugin-dist/com.claude.cameo.bridge'))
-    into("${cameoHome}/plugins/com.claude.cameo.bridge")
+    from(layout.buildDirectory.dir('plugin-dist/com.nomagic.magicdraw.mcpbridge'))
+    into("${cameoHome}/plugins/com.nomagic.magicdraw.mcpbridge")
     doFirst {
         delete fileTree(
-            dir: "${cameoHome}/plugins/com.claude.cameo.bridge",
-            include: 'cameo-mcp-bridge-*.jar',
+            dir: "${cameoHome}/plugins/com.nomagic.magicdraw.mcpbridge",
+            include: 'magicdraw-mcp-bridge-*.jar',
             exclude: jar.archiveFileName.get()
         )
     }
