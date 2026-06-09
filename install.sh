@@ -88,9 +88,9 @@ echo ""
 
 # Deploy to MagicDraw
 echo "Deploying plugin to MagicDraw..."
-mkdir -p "$CAMEO_HOME/plugins/com.nomagic.magicdraw.mcpbridge"
-cp -r build/plugin-dist/com.nomagic.magicdraw.mcpbridge/* "$CAMEO_HOME/plugins/com.nomagic.magicdraw.mcpbridge/"
-echo "Plugin deployed to: $CAMEO_HOME/plugins/com.nomagic.magicdraw.mcpbridge/"
+mkdir -p "$CAMEO_HOME/plugins/com.nomagic.mcpbridge"
+cp -r build/plugin-dist/com.nomagic.mcpbridge/* "$CAMEO_HOME/plugins/com.nomagic.mcpbridge/"
+echo "Plugin deployed to: $CAMEO_HOME/plugins/com.nomagic.mcpbridge/"
 echo ""
 
 # Install Python MCP server

@@ -1,0 +1,1039 @@
+package com.nomagic.mcpbridge.handlers;
+
+import com.nomagic.mcpbridge.HttpBridgeServer;
+import com.nomagic.mcpbridge.util.EdtDispatcher;
+import com.nomagic.mcpbridge.util.ElementSerializer;
+import com.nomagic.mcpbridge.util.JsonHelper;
+import com.nomagic.mcpbridge.util.TaggedValueCoercion;
+import com.nomagic.magicdraw.openapi.uml.ModelElementsManager;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Classifier;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Comment;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Constraint;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Element;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralInteger;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralString;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.LiteralUnlimitedNatural;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.MultiplicityElement;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.NamedElement;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.OpaqueExpression;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Parameter;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.ParameterDirectionKind;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.ParameterDirectionKindEnum;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Property;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Type;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.TypedElement;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.ValueSpecification;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.VisibilityKind;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.VisibilityKindEnum;
+import com.nomagic.uml2.ext.magicdraw.classes.mdkernel.AggregationKindEnum;
+import com.nomagic.uml2.ext.magicdraw.compositestructures.mdports.Port;
+import com.nomagic.uml2.ext.magicdraw.mdprofiles.Profile;
+import com.nomagic.uml2.ext.magicdraw.mdprofiles.Stereotype;
+import com.nomagic.uml2.ext.magicdraw.activities.mdbasicactivities.ActivityParameterNode;
+import com.nomagic.uml2.ext.magicdraw.activities.mdintermediateactivities.ActivityPartition;
+import com.nomagic.uml2.ext.jmi.helpers.StereotypesHelper;
+import com.nomagic.uml2.impl.ElementsFactory;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+
+import java.io.IOException;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+/**
+ * Handles specification read/write endpoints for full element property access.
+ * <p>
+ * GET  /api/v1/elements/{id}/specification - returns all editable properties
+ * PUT  /api/v1/elements/{id}/specification - sets properties by name
+ * <p>
+ * Returns standard UML properties via JMI reflection and tagged values from
+ * all applied stereotypes.
+ */
+public class SpecificationHandler implements HttpHandler {
+
+    private static final Logger LOG = Logger.getLogger(SpecificationHandler.class.getName());
+    private static final String PREFIX = "/api/v1/elements/";
+
+    private static final String[] STANDARD_FEATURES = {
+        "name",
+        "visibility",
+        "isAbstract",
+        "isFinalSpecialization",
+        "isLeaf",
+        "isStatic",
+        "isQuery",
+        "isReadOnly",
+        "isDerived",
+        "isDerivedUnion",
+        "isOrdered",
+        "isUnique",
+        "lower",
+        "upper",
+        "isActive",
+        "aggregation",
+        "direction",
+        "isBehavior",
+        "isConjugated",
+        "isService",
+        "represents",
+        "parameter",
+        "type"
+    };
+
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+        try {
+            String method = exchange.getRequestMethod();
+
+            if ("OPTIONS".equals(method)) {
+                exchange.getResponseHeaders().set("Access-Control-Allow-Methods",
+                        "GET, PUT, OPTIONS");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Headers",
+                        "Content-Type");
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+
+            String path = exchange.getRequestURI().getPath();
+            String elementId = extractElementId(path);
+            if (elementId == null) {
+                HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST",
+                        "Element ID required in path");
+                return;
+            }
+
+            if ("GET".equals(method)) {
+                handleGetSpecification(exchange, elementId);
+            } else if ("PUT".equals(method)) {
+                handleSetSpecification(exchange, elementId);
+            } else {
+                HttpBridgeServer.sendError(exchange, 405, "METHOD_NOT_ALLOWED",
+                        "Only GET and PUT are supported");
+            }
+
+        } catch (IllegalArgumentException e) {
+            HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST", e.getMessage());
+        } catch (IllegalStateException e) {
+            HttpBridgeServer.sendError(exchange, 409, "CONFLICT", e.getMessage());
+        } catch (Exception e) {
+            LOG.log(Level.SEVERE, "Error in SpecificationHandler", e);
+            HttpBridgeServer.sendError(exchange, 500, "INTERNAL_ERROR", e.getMessage());
+        }
+    }
+
+    private void handleGetSpecification(HttpExchange exchange, String elementId)
+            throws Exception {
+
+        JsonObject result = EdtDispatcher.read(project -> {
+            Element element = (Element) project.getElementByID(elementId);
+            if (element == null) {
+                throw new IllegalArgumentException("Element not found: " + elementId);
+            }
+
+            JsonObject response = new JsonObject();
+            response.addProperty("elementId", element.getID());
+
+            if (element instanceof NamedElement) {
+                String name = ((NamedElement) element).getName();
+                response.addProperty("name", name != null ? name : "");
+            }
+            response.addProperty("type", element.getHumanType());
+
+            JsonObject properties = readStandardProperties(element);
+            response.add("properties", properties);
+
+            String documentation = readDocumentation(element);
+            if (documentation != null) {
+                response.addProperty("documentation", documentation);
+            }
+
+            JsonArray appliedStereotypes = readAppliedStereotypes(element);
+            if (appliedStereotypes.size() > 0) {
+                response.add("appliedStereotypes", appliedStereotypes);
+            }
+
+            // Read owned constraints (Use Case Description fields, etc.)
+            JsonObject constraints = readOwnedConstraints(element);
+            if (constraints.size() > 0) {
+                response.add("constraints", constraints);
+            }
+
+            return response;
+        });
+
+        HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
+    private void handleSetSpecification(HttpExchange exchange, String elementId)
+            throws Exception {
+
+        JsonObject body = JsonHelper.parseBody(exchange);
+        boolean hasProps = body.has("properties") && body.get("properties").isJsonObject()
+                && body.getAsJsonObject("properties").size() > 0;
+        boolean hasConstraints = body.has("constraints") && body.get("constraints").isJsonObject()
+                && body.getAsJsonObject("constraints").size() > 0;
+        if (!hasProps && !hasConstraints) {
+            HttpBridgeServer.sendError(exchange, 400, "BAD_REQUEST",
+                    "Request body must contain a \"properties\" and/or \"constraints\" object");
+            return;
+        }
+        JsonObject props = hasProps ? body.getAsJsonObject("properties") : new JsonObject();
+        JsonObject constraintProps = hasConstraints ? body.getAsJsonObject("constraints") : new JsonObject();
+
+        JsonObject result = EdtDispatcher.write(
+                "Set specification on " + elementId, project -> {
+
+            Element element = (Element) project.getElementByID(elementId);
+            if (element == null) {
+                throw new IllegalArgumentException("Element not found: " + elementId);
+            }
+
+            Map<String, Stereotype> tagToStereotype = new LinkedHashMap<>();
+            List<Stereotype> stereotypes = StereotypesHelper.getStereotypes(element);
+            if (stereotypes != null) {
+                for (Stereotype st : stereotypes) {
+                    List<Property> attrs = st.getAttribute();
+                    if (attrs != null) {
+                        for (Property attr : attrs) {
+                            if (StereotypesHelper.isExtensionProperty(attr)) {
+                                continue;
+                            }
+                            String tagName = attr.getName();
+                            if (tagName != null && !tagName.isEmpty()) {
+                                tagToStereotype.put(tagName, st);
+                            }
+                        }
+                    }
+                }
+            }
+
+            JsonArray setPropertiesArr = new JsonArray();
+            JsonArray unrecognized = new JsonArray();
+            int setCount = 0;
+
+            for (String propName : props.keySet()) {
+                JsonElement valueElement = props.get(propName);
+                // 1. Check tagged values first
+                if (tagToStereotype.containsKey(propName)) {
+                    Stereotype stereo = tagToStereotype.get(propName);
+                    StereotypesHelper.setStereotypePropertyValue(
+                            element,
+                            stereo,
+                            propName,
+                            TaggedValueCoercion.coerceForTag(project, stereo, propName, valueElement));
+                    setPropertiesArr.add(propName);
+                    setCount++;
+                    continue;
+                }
+
+                // 2. Try standard UML property via typed setters
+                boolean handled = trySetStandardProperty(
+                        element, propName, valueElement, project);
+                if (handled) {
+                    setPropertiesArr.add(propName);
+                    setCount++;
+                    continue;
+                }
+
+                // 3. Unrecognized
+                unrecognized.add(propName);
+            }
+
+            // Handle constraints (Use Case Description fields, etc.)
+            JsonArray setConstraintsArr = new JsonArray();
+            for (String cName : constraintProps.keySet()) {
+                String cValue = constraintProps.get(cName).getAsString();
+                setOrCreateConstraint(element, cName, cValue, project);
+                setConstraintsArr.add(cName);
+                setCount++;
+            }
+
+            JsonObject response = new JsonObject();
+            response.addProperty("updated", true);
+            response.addProperty("setCount", setCount);
+            response.add("setProperties", setPropertiesArr);
+            if (setConstraintsArr.size() > 0) {
+                response.add("setConstraints", setConstraintsArr);
+            }
+            if (unrecognized.size() > 0) {
+                response.add("unrecognized", unrecognized);
+            }
+            response.add("element", ElementSerializer.toJson(element));
+            return response;
+        });
+
+        HttpBridgeServer.sendJson(exchange, 200, result);
+    }
+
+    // -----------------------------------------------------------------------
+    //  Private helpers -- GET specification
+    // -----------------------------------------------------------------------
+
+    private JsonObject readStandardProperties(Element element) {
+        JsonObject properties = new JsonObject();
+
+        for (String featureName : STANDARD_FEATURES) {
+            try {
+                Object value = element.refGetValue(featureName);
+                if (value != null) {
+                    addPropertyValue(properties, featureName, value);
+                }
+            } catch (Exception e) {
+                LOG.log(Level.FINEST, "Feature " + featureName
+                        + " not available on " + element.getHumanType(), e);
+            }
+        }
+
+        // Read subject for UseCases (collection-valued)
+        try {
+            Object subjectVal = element.refGetValue("subject");
+            if (subjectVal instanceof Collection) {
+                JsonArray subjectArray = new JsonArray();
+                for (Object item : (Collection<?>) subjectVal) {
+                    if (item instanceof NamedElement) {
+                        JsonObject ref = new JsonObject();
+                        ref.addProperty("id", ((Element) item).getID());
+                        ref.addProperty("name", ((NamedElement) item).getName());
+                        subjectArray.add(ref);
+                    }
+                }
+                if (subjectArray.size() > 0) {
+                    properties.add("subject", subjectArray);
+                }
+            }
+        } catch (Exception e) {
+            // Not a UseCase or feature not available -- skip
+        }
+
+        if (element instanceof Property) {
+            Stereotype flowPropertyStereo = getFlowPropertyStereotype(element);
+            if (flowPropertyStereo != null) {
+                String direction = readFlowPropertyDirection((Property) element, flowPropertyStereo);
+                if (direction != null && !direction.isEmpty()) {
+                    properties.addProperty("direction", direction);
+                }
+            }
+        }
+
+        return properties;
+    }
+
+    private void addPropertyValue(JsonObject target, String name, Object value) {
+        if (value instanceof Boolean) {
+            target.addProperty(name, (Boolean) value);
+        } else if (value instanceof Number) {
+            target.addProperty(name, (Number) value);
+        } else if (value instanceof VisibilityKind) {
+            target.addProperty(name, value.toString());
+        } else if (value instanceof String) {
+            target.addProperty(name, (String) value);
+        } else if (value instanceof NamedElement) {
+            JsonObject ref = new JsonObject();
+            ref.addProperty("id", ((Element) value).getID());
+            ref.addProperty("name", ((NamedElement) value).getName());
+            target.add(name, ref);
+        } else if (value instanceof Element) {
+            JsonObject ref = new JsonObject();
+            ref.addProperty("id", ((Element) value).getID());
+            target.add(name, ref);
+        } else if (value instanceof Collection) {
+            JsonArray arr = new JsonArray();
+            for (Object item : (Collection<?>) value) {
+                if (item instanceof NamedElement) {
+                    JsonObject ref = new JsonObject();
+                    ref.addProperty("id", ((Element) item).getID());
+                    ref.addProperty("name", ((NamedElement) item).getName());
+                    arr.add(ref);
+                } else if (item != null) {
+                    arr.add(String.valueOf(item));
+                }
+            }
+            if (arr.size() > 0) {
+                target.add(name, arr);
+            }
+        } else {
+            target.addProperty(name, String.valueOf(value));
+        }
+    }
+
+    private JsonElement serializeTaggedValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean) {
+            return new JsonPrimitive((Boolean) value);
+        }
+        if (value instanceof Number) {
+            return new JsonPrimitive((Number) value);
+        }
+        if (value instanceof String) {
+            return new JsonPrimitive((String) value);
+        }
+        if (value instanceof Character) {
+            return new JsonPrimitive((Character) value);
+        }
+        if (value instanceof VisibilityKind) {
+            return new JsonPrimitive(value.toString());
+        }
+        if (value instanceof Element) {
+            return ElementSerializer.toJsonCompact((Element) value);
+        }
+        if (value instanceof Collection<?>) {
+            JsonArray arr = new JsonArray();
+            for (Object item : (Collection<?>) value) {
+                JsonElement serialized = serializeTaggedValue(item);
+                if (serialized != null) {
+                    arr.add(serialized);
+                }
+            }
+            return arr;
+        }
+        return new JsonPrimitive(String.valueOf(value));
+    }
+
+    private String readDocumentation(Element element) {
+        try {
+            Collection<Comment> comments = element.getOwnedComment();
+            if (comments != null && !comments.isEmpty()) {
+                StringBuilder doc = new StringBuilder();
+                for (Comment c : comments) {
+                    String body = c.getBody();
+                    if (body != null && !body.isEmpty()) {
+                        if (doc.length() > 0) {
+                            doc.append("\n");
+                        }
+                        doc.append(body);
+                    }
+                }
+                if (doc.length() > 0) {
+                    return doc.toString();
+                }
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read comments", e);
+        }
+        return null;
+    }
+
+    private Stereotype getFlowPropertyStereotype(Element element) {
+        Stereotype flowProperty = StereotypesHelper.getAppliedStereotypeByString(element, "FlowProperty");
+        if (flowProperty != null) {
+            return flowProperty;
+        }
+        return StereotypesHelper.getAppliedStereotypeByString(element, "flowProperty");
+    }
+
+    private String readFlowPropertyDirection(Property property, Stereotype flowPropertyStereo) {
+        try {
+            Object direction = StereotypesHelper.getStereotypePropertyFirst(
+                    property,
+                    flowPropertyStereo,
+                    "direction");
+            if (direction == null) {
+                return null;
+            }
+            if (direction instanceof Enum<?>) {
+                return ((Enum<?>) direction).name();
+            }
+            try {
+                Object name = direction.getClass().getMethod("getName").invoke(direction);
+                if (name != null) {
+                    String text = String.valueOf(name).trim();
+                    if (!text.isEmpty()) {
+                        return text;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Fall through to String.valueOf below.
+            }
+            return String.valueOf(direction);
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read flow property direction", e);
+            return null;
+        }
+    }
+
+    @SuppressWarnings("rawtypes")
+    private JsonArray readAppliedStereotypes(Element element) {
+        JsonArray result = new JsonArray();
+        try {
+            List<Stereotype> stereotypes = StereotypesHelper.getStereotypes(element);
+            if (stereotypes == null || stereotypes.isEmpty()) {
+                return result;
+            }
+
+            for (Stereotype stereo : stereotypes) {
+                JsonObject stereoObj = new JsonObject();
+                stereoObj.addProperty("stereotype", stereo.getName());
+
+                try {
+                    Profile profile = stereo.getProfile();
+                    if (profile != null) {
+                        stereoObj.addProperty("profile", profile.getName());
+                    }
+                } catch (Exception e) {
+                    try {
+                        com.nomagic.uml2.ext.magicdraw.classes.mdkernel.Package pkg =
+                                StereotypesHelper.getProfileForStereotype(stereo);
+                        if (pkg != null) {
+                            stereoObj.addProperty("profile", pkg.getName());
+                        }
+                    } catch (Exception e2) {
+                        LOG.log(Level.FINE, "Could not resolve profile for "
+                                + stereo.getName(), e2);
+                    }
+                }
+
+                JsonObject taggedValues = new JsonObject();
+                List<Property> attrs = stereo.getAttribute();
+                if (attrs != null) {
+                    for (Property attr : attrs) {
+                        if (StereotypesHelper.isExtensionProperty(attr)) {
+                            continue;
+                        }
+                        String tagName = attr.getName();
+                        if (tagName == null || tagName.isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            List values = StereotypesHelper
+                                    .getStereotypePropertyValue(
+                                            element, stereo, tagName);
+                            if (values != null && !values.isEmpty()) {
+                                if (values.size() == 1) {
+                                    JsonElement serialized = serializeTaggedValue(values.get(0));
+                                    if (serialized != null) {
+                                        taggedValues.add(tagName, serialized);
+                                    }
+                                } else {
+                                    JsonElement serialized = serializeTaggedValue(values);
+                                    if (serialized != null) {
+                                        taggedValues.add(tagName, serialized);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            LOG.log(Level.FINE,
+                                    "Could not read tag " + tagName, e);
+                        }
+                    }
+                }
+
+                if (taggedValues.size() > 0) {
+                    stereoObj.add("taggedValues", taggedValues);
+                }
+
+                result.add(stereoObj);
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read stereotypes", e);
+        }
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
+    //  Private helpers -- SET specification
+    // -----------------------------------------------------------------------
+
+    private boolean trySetStandardProperty(Element element, String propName,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+
+        try {
+            switch (propName) {
+                case "name":
+                    if (element instanceof NamedElement) {
+                        ((NamedElement) element).setName(value.getAsString());
+                        return true;
+                    }
+                    break;
+
+                case "visibility":
+                    if (element instanceof NamedElement) {
+                        VisibilityKindEnum vk = VisibilityKindEnum.getByName(
+                                value.getAsString().toLowerCase());
+                        if (vk != null) {
+                            ((NamedElement) element).setVisibility(vk);
+                            return true;
+                        }
+                    }
+                    break;
+
+                case "isAbstract":
+                    if (element instanceof Classifier) {
+                        ((Classifier) element).setAbstract(
+                                value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "isFinalSpecialization":
+                    if (element instanceof Classifier) {
+                        ((Classifier) element).setFinalSpecialization(
+                                value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "documentation":
+                    return setDocumentation(element,
+                            value.getAsString(), project);
+
+                case "type":
+                    return setTypedElementType(element, value, project);
+
+                case "direction":
+                    if (setParameterDirection(element, value)) {
+                        return true;
+                    }
+                    return setFlowPropertyDirection(element, value, project);
+
+                case "parameter":
+                    return setActivityParameterNodeParameter(element, value, project);
+
+                case "lower":
+                    return setMultiplicityBound(element, value, project, true);
+
+                case "upper":
+                    return setMultiplicityBound(element, value, project, false);
+
+                case "isOrdered":
+                    if (element instanceof MultiplicityElement) {
+                        ((MultiplicityElement) element).setOrdered(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "isUnique":
+                    if (element instanceof MultiplicityElement) {
+                        ((MultiplicityElement) element).setUnique(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "aggregation":
+                    return setAggregation(element, value);
+
+                case "isBehavior":
+                    if (element instanceof Port) {
+                        ((Port) element).setBehavior(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "isConjugated":
+                    if (element instanceof Port) {
+                        ((Port) element).setConjugated(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "isService":
+                    if (element instanceof Port) {
+                        ((Port) element).setService(value.getAsBoolean());
+                        return true;
+                    }
+                    break;
+
+                case "represents":
+                    return setRepresents(element, value, project);
+
+                default:
+                    return tryRefSetValue(element, propName, value, project);
+            }
+        } catch (Exception e) {
+            LOG.log(Level.WARNING,
+                    "Failed to set property " + propName, e);
+        }
+        return false;
+    }
+
+    private boolean tryRefSetValue(Element element, String propName,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        for (String feat : STANDARD_FEATURES) {
+            if (feat.equals(propName)) {
+                try {
+                    element.refSetValue(propName, coerceJsonValue(value, project));
+                    return true;
+                } catch (Exception e) {
+                    LOG.log(Level.FINE,
+                            "refSetValue failed for " + propName, e);
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean setTypedElementType(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (!(element instanceof TypedElement)) {
+            return false;
+        }
+        if (value == null || value.isJsonNull()) {
+            ((TypedElement) element).setType(null);
+            return true;
+        }
+
+        String typeId = null;
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+            typeId = value.getAsString();
+        } else if (value.isJsonObject()) {
+            JsonObject obj = value.getAsJsonObject();
+            if (obj.has("id") && obj.get("id").isJsonPrimitive()) {
+                typeId = obj.get("id").getAsString();
+            }
+        }
+
+        if (typeId == null || typeId.isEmpty()) {
+            return false;
+        }
+
+        Element resolved = (Element) project.getElementByID(typeId);
+        if (!(resolved instanceof Type)) {
+            throw new IllegalArgumentException("Type element not found or not a Type: " + typeId);
+        }
+
+        ((TypedElement) element).setType((Type) resolved);
+        return true;
+    }
+
+    private boolean setMultiplicityBound(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project,
+            boolean lowerBound) {
+        if (!(element instanceof MultiplicityElement)) {
+            return false;
+        }
+        Integer bound = parseMultiplicityBound(value, !lowerBound);
+        if (bound == null) {
+            return false;
+        }
+
+        ElementsFactory ef = project.getElementsFactory();
+        MultiplicityElement multiplicityElement = (MultiplicityElement) element;
+        if (lowerBound) {
+            if (bound < 0) {
+                throw new IllegalArgumentException("lower must be zero or greater");
+            }
+            ValueSpecification existing = multiplicityElement.getLowerValue();
+            if (existing instanceof LiteralInteger) {
+                ((LiteralInteger) existing).setValue(bound);
+            } else {
+                LiteralInteger literal = ef.createLiteralIntegerInstance();
+                literal.setValue(bound);
+                multiplicityElement.setLowerValue(literal);
+            }
+            return true;
+        }
+
+        ValueSpecification existing = multiplicityElement.getUpperValue();
+        if (existing instanceof LiteralUnlimitedNatural) {
+            ((LiteralUnlimitedNatural) existing).setValue(bound);
+        } else {
+            LiteralUnlimitedNatural literal = ef.createLiteralUnlimitedNaturalInstance();
+            literal.setValue(bound);
+            multiplicityElement.setUpperValue(literal);
+        }
+        return true;
+    }
+
+    private Integer parseMultiplicityBound(JsonElement value, boolean allowUnlimited) {
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        if (value.isJsonPrimitive()) {
+            JsonPrimitive primitive = value.getAsJsonPrimitive();
+            if (primitive.isNumber()) {
+                return primitive.getAsInt();
+            }
+            if (primitive.isString()) {
+                String text = primitive.getAsString().trim();
+                if (allowUnlimited && "*".equals(text)) {
+                    return -1;
+                }
+                return Integer.parseInt(text);
+            }
+        }
+        throw new IllegalArgumentException("Multiplicity bounds must be integers" + (allowUnlimited ? " or '*'" : ""));
+    }
+
+    private boolean setAggregation(Element element, JsonElement value) {
+        if (!(element instanceof Property)) {
+            return false;
+        }
+        String text = value.getAsString().trim().toLowerCase();
+        AggregationKindEnum resolved = AggregationKindEnum.getByName(text);
+        if (resolved == null) {
+            resolved = AggregationKindEnum.get(text);
+        }
+        if (resolved == null) {
+            throw new IllegalArgumentException(
+                    "Unsupported aggregation value: " + text + ". Expected none, shared, or composite.");
+        }
+        ((Property) element).setAggregation(resolved);
+        return true;
+    }
+
+    private boolean setRepresents(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (!(element instanceof ActivityPartition)) {
+            return false;
+        }
+        Object coerced = coerceJsonValue(value, project);
+        if (!(coerced instanceof Element)) {
+            throw new IllegalArgumentException("represents must reference an element by id");
+        }
+        ((ActivityPartition) element).setRepresents((Element) coerced);
+        return true;
+    }
+
+    private boolean setFlowPropertyDirection(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (!(element instanceof Property)) {
+            return false;
+        }
+        Stereotype flowPropertyStereo = getFlowPropertyStereotype(element);
+        if (flowPropertyStereo == null) {
+            return false;
+        }
+        StereotypesHelper.setStereotypePropertyValue(
+                element,
+                flowPropertyStereo,
+                "direction",
+                TaggedValueCoercion.coerceForTag(project, flowPropertyStereo, "direction", value));
+        return true;
+    }
+
+    private boolean setParameterDirection(Element element, JsonElement value) {
+        if (!(element instanceof Parameter)) {
+            return false;
+        }
+        String raw = value.getAsString();
+        ParameterDirectionKind direction = parseParameterDirection(raw);
+        ((Parameter) element).setDirection(direction);
+        return true;
+    }
+
+    private ParameterDirectionKind parseParameterDirection(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase();
+        switch (normalized) {
+            case "in":
+            case "input":
+                return ParameterDirectionKindEnum.IN;
+            case "out":
+            case "output":
+                return ParameterDirectionKindEnum.OUT;
+            case "inout":
+            case "in-out":
+            case "in_out":
+            case "bidirectional":
+                return ParameterDirectionKindEnum.INOUT;
+            case "return":
+            case "result":
+                return ParameterDirectionKindEnum.RETURN;
+            default:
+                throw new IllegalArgumentException(
+                        "direction must be one of: in, out, inout, return");
+        }
+    }
+
+    private boolean setActivityParameterNodeParameter(
+            Element element,
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (!(element instanceof ActivityParameterNode)) {
+            return false;
+        }
+        Object coerced = coerceJsonValue(value, project);
+        if (!(coerced instanceof Parameter)) {
+            throw new IllegalArgumentException("parameter must reference a Parameter element by id");
+        }
+        ((ActivityParameterNode) element).setParameter((Parameter) coerced);
+        return true;
+    }
+
+    private Object coerceJsonValue(
+            JsonElement value,
+            com.nomagic.magicdraw.core.Project project) {
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        if (value.isJsonArray()) {
+            JsonArray array = value.getAsJsonArray();
+            List<Object> converted = new java.util.ArrayList<>(array.size());
+            for (JsonElement item : array) {
+                converted.add(coerceJsonValue(item, project));
+            }
+            return converted;
+        }
+        if (value.isJsonObject()) {
+            JsonObject obj = value.getAsJsonObject();
+            if (obj.has("id") && obj.get("id").isJsonPrimitive()) {
+                String id = obj.get("id").getAsString();
+                Element referenced = (Element) project.getElementByID(id);
+                if (referenced != null) {
+                    return referenced;
+                }
+            }
+            return obj.toString();
+        }
+
+        JsonPrimitive primitive = value.getAsJsonPrimitive();
+        if (primitive.isBoolean()) {
+            return primitive.getAsBoolean();
+        }
+        if (primitive.isNumber()) {
+            return primitive.getAsNumber();
+        }
+        return primitive.getAsString();
+    }
+
+    private boolean setDocumentation(Element element, String doc,
+            com.nomagic.magicdraw.core.Project project) {
+        try {
+            Collection<Comment> comments = element.getOwnedComment();
+            if (comments != null && !comments.isEmpty()) {
+                Comment first = comments.iterator().next();
+                first.setBody(doc);
+            } else {
+                ElementsFactory ef = project.getElementsFactory();
+                Comment comment = ef.createCommentInstance();
+                comment.setBody(doc);
+                ModelElementsManager.getInstance()
+                        .addElement(comment, element);
+            }
+            return true;
+        } catch (Exception e) {
+            LOG.log(Level.WARNING, "Failed to set documentation", e);
+            return false;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    //  Private helpers -- Constraints (Use Case Description, etc.)
+    // -----------------------------------------------------------------------
+
+    private JsonObject readOwnedConstraints(Element element) {
+        JsonObject constraints = new JsonObject();
+        try {
+            Collection<Element> owned = element.getOwnedElement();
+            if (owned != null) {
+                for (Element child : owned) {
+                    if (child instanceof Constraint) {
+                        Constraint c = (Constraint) child;
+                        String name = (c instanceof NamedElement)
+                                ? ((NamedElement) c).getName() : null;
+                        if (name == null || name.isEmpty()) continue;
+                        String body = readConstraintBody(c);
+                        constraints.addProperty(name, body != null ? body : "");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read owned constraints", e);
+        }
+        return constraints;
+    }
+
+    private String readConstraintBody(Constraint c) {
+        try {
+            ValueSpecification spec = c.getSpecification();
+            if (spec == null) return null;
+            if (spec instanceof LiteralString) {
+                return ((LiteralString) spec).getValue();
+            }
+            if (spec instanceof OpaqueExpression) {
+                java.util.List<String> bodies = ((OpaqueExpression) spec).getBody();
+                if (bodies != null && !bodies.isEmpty()) {
+                    return bodies.get(0);
+                }
+            }
+            // Fallback: try stringValue via JMI
+            try {
+                Object sv = spec.refGetValue("value");
+                return sv != null ? String.valueOf(sv) : null;
+            } catch (Exception e) {
+                return null;
+            }
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Could not read constraint specification", e);
+            return null;
+        }
+    }
+
+    private void setOrCreateConstraint(Element owner, String name, String text,
+            com.nomagic.magicdraw.core.Project project) throws Exception {
+        // Try to find existing constraint with this name
+        for (Element child : owner.getOwnedElement()) {
+            if (child instanceof Constraint) {
+                Constraint c = (Constraint) child;
+                String cName = (c instanceof NamedElement)
+                        ? ((NamedElement) c).getName() : null;
+                if (name.equalsIgnoreCase(cName)) {
+                    setConstraintText(c, text, project);
+                    return;
+                }
+            }
+        }
+        // Create new constraint
+        ElementsFactory ef = project.getElementsFactory();
+        Constraint c = ef.createConstraintInstance();
+        ((NamedElement) c).setName(name);
+        setConstraintText(c, text, project);
+        ModelElementsManager.getInstance().addElement(c, owner);
+    }
+
+    private void setConstraintText(Constraint c, String text,
+            com.nomagic.magicdraw.core.Project project) {
+        ValueSpecification existing = c.getSpecification();
+        // Update existing OpaqueExpression or LiteralString if present
+        if (existing instanceof OpaqueExpression) {
+            java.util.List<String> bodies = ((OpaqueExpression) existing).getBody();
+            bodies.clear();
+            bodies.add(text);
+            return;
+        }
+        if (existing instanceof LiteralString) {
+            ((LiteralString) existing).setValue(text);
+            return;
+        }
+        // Create a new OpaqueExpression
+        ElementsFactory ef = project.getElementsFactory();
+        OpaqueExpression oe = ef.createOpaqueExpressionInstance();
+        oe.getBody().add(text);
+        c.setSpecification(oe);
+    }
+
+    // -----------------------------------------------------------------------
+    //  Path extraction
+    // -----------------------------------------------------------------------
+
+    private String extractElementId(String path) {
+        if (path == null || !path.startsWith(PREFIX)) {
+            return null;
+        }
+        String remainder = path.substring(PREFIX.length());
+        int slash = remainder.indexOf('/');
+        if (slash > 0) {
+            return remainder.substring(0, slash);
+        }
+        return null;
+    }
+}

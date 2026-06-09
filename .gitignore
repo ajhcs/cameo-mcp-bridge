@@ -23,5 +23,13 @@ Thumbs.db
 tmp/
 mcp-server/validation-output/
 
+# Temporary deployment and migration artifacts
+DEPLOYMENT-COMPLETE.md
+PACKAGE-RENAME-COMPLETE.md
+MANUAL-BUILD-PACKAGE/
+READY-TO-DEPLOY/
+plugin/src-old-cameo-backup/
+plugin/test-old-backup/
+
 # Local configuration (contains user-specific paths)
 config.sh

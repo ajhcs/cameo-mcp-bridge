@@ -1,9 +1,5 @@
 #!/bin/sh
 
-# Force Java 11 for this build
-export JAVA_HOME="/mnt/c/Program Files/Amazon Corretto/jdk11.0.21_9"
-export PATH="$JAVA_HOME/bin:$PATH"
-
 #
 # Copyright © 2015-2021 the original authors.
 #

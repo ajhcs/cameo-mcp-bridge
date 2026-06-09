@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin
-    id="com.nomagic.magicdraw.mcpbridge"
+    id="com.nomagic.mcpbridge"
     name="MagicDraw MCP Bridge"
     version="1.0.0-md2022xr2"
     internalVersion="100000"
     provider-name="Custom Extension"
-    class="com.nomagic.magicdraw.mcpbridge.MagicDrawMCPBridgePlugin">
+    class="com.nomagic.mcpbridge.MagicDrawMCPBridgePlugin">
     <requires>
         <api version="1.0"/>
         <required-plugin id="com.nomagic.magicdraw.diagramtable" name="Diagram Table" version="2022x Refresh2"/>
