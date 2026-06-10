@@ -67,8 +67,8 @@ This is an open-source MCP server that integrates directly with a running MagicD
 
 **Key Architecture Changes for 2022xR2:**
 
-- **Package Name**: `com.nomagic.magicdraw.mcpbridge` (was `com.claude.cameo.bridge`)
-- **Plugin ID**: `com.nomagic.magicdraw.mcpbridge`
+- **Package Name**: `com.nomagic.mcpbridge` (was `com.claude.cameo.bridge`)
+- **Plugin ID**: `com.nomagic.mcpbridge`
 - **Java Version**: Java 11 (downgraded from Java 17)
 - **Target**: MagicDraw 2022xR2 (was Cameo/CATIA Magic 2024x)
 - **Plugin Version**: `1.0.0-md2022xr2`
@@ -122,7 +122,7 @@ cd cameo-mcp-bridge
 The install script will:
 1. Load paths from `config.sh` (or use environment variables)
 2. Build the Java plugin with Gradle using Java 11
-3. Deploy it to `$MAGICDRAW_HOME/plugins/com.nomagic.magicdraw.mcpbridge/`
+3. Deploy it to `$MAGICDRAW_HOME/plugins/com.nomagic.mcpbridge/`
 4. Create or reuse `mcp-server/.venv/`
 5. Install the Python MCP server
 6. Register with Claude Code when the `claude` CLI is available
@@ -144,9 +144,9 @@ Or with explicit paths:
 
 **2. Deploy to MagicDraw:**
 
-Copy the contents of `plugin/build/plugin-dist/com.nomagic.magicdraw.mcpbridge/` to:
+Copy the contents of `plugin/build/plugin-dist/com.nomagic.mcpbridge/` to:
 ```
-<MAGICDRAW_HOME>/plugins/com.nomagic.magicdraw.mcpbridge/
+<MAGICDRAW_HOME>/plugins/com.nomagic.mcpbridge/
 ```
 
 The plugin directory should contain:
@@ -191,8 +191,8 @@ This version has been backported from Cameo 2024x to MagicDraw 2022xR2 with the 
 - **Pattern matching instanceof** converted to traditional syntax
 
 ### Package Changes
-- **Package**: `com.nomagic.magicdraw.mcpbridge` (was `com.claude.cameo.bridge`)
-- **Plugin ID**: `com.nomagic.magicdraw.mcpbridge`
+- **Package**: `com.nomagic.mcpbridge` (was `com.claude.cameo.bridge`)
+- **Plugin ID**: `com.nomagic.mcpbridge`
 - **Main Class**: `MagicDrawMCPBridgePlugin` (was `CameoMCPBridgePlugin`)
 
 ### API Compatibility
@@ -320,7 +320,7 @@ cd plugin
 ./gradlew assemblePlugin -PcameoHome="C:/Users/borrth/MagicDraw2022xR2"
 ```
 
-The output goes to `plugin/build/plugin-dist/com.nomagic.magicdraw.mcpbridge/`.
+The output goes to `plugin/build/plugin-dist/com.nomagic.mcpbridge/`.
 
 ### Running the MCP Server Standalone
 

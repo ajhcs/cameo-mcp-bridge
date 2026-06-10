@@ -43,7 +43,7 @@ dependencies {
     compileOnly fileTree(dir: "${cameoHome}/lib", include: ['cmof-*.jar'])
     compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.dependencymatrix/dependencymatrix_api.jar")
     compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.diagramtable/diagramtable_api.jar")
-    compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.visualization.relationshipmap/relationshipmap_api.jar")
+    compileOnly files("${cameoHome}/plugins/com.nomagic.magicdraw.relationshipmap/relationshipmap_api.jar")
 
     testImplementation files("${cameoHome}/lib/junit-4.13.2.jar")
     testImplementation fileTree(dir: "${cameoHome}/lib", include: ['gson-*.jar'])
@@ -75,16 +75,16 @@ tasks.register('assemblePlugin', Copy) {
     dependsOn jar
     from('plugin.xml')
     from(jar.archiveFile)
-    into(layout.buildDirectory.dir('plugin-dist/com.nomagic.magicdraw.mcpbridge'))
+    into(layout.buildDirectory.dir('plugin-dist/com.nomagic.mcpbridge'))
 }
 
 tasks.register('deploy', Copy) {
     dependsOn assemblePlugin
-    from(layout.buildDirectory.dir('plugin-dist/com.nomagic.magicdraw.mcpbridge'))
-    into("${cameoHome}/plugins/com.nomagic.magicdraw.mcpbridge")
+    from(layout.buildDirectory.dir('plugin-dist/com.nomagic.mcpbridge'))
+    into("${cameoHome}/plugins/com.nomagic.mcpbridge")
     doFirst {
         delete fileTree(
-            dir: "${cameoHome}/plugins/com.nomagic.magicdraw.mcpbridge",
+            dir: "${cameoHome}/plugins/com.nomagic.mcpbridge",
             include: 'magicdraw-mcp-bridge-*.jar',
             exclude: jar.archiveFileName.get()
         )
