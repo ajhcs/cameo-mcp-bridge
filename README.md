@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/ajhcs-cameo-mcp-bridge-badge.png)](https://mseep.ai/app/ajhcs-cameo-mcp-bridge)
+
 # Cameo MCP Bridge
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that connects AI coding assistants to **CATIA Magic / Cameo Systems Modeler** -- the industry-standard MBSE tool for SysML and UML modeling.
