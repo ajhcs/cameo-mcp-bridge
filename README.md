@@ -337,7 +337,7 @@ These route families intentionally fail closed when optional CATIA plugins, lice
 |------|-------------|
 | `cameo_list_diagram_types` | List validated diagram request tokens, aliases, and native Cameo types |
 | `cameo_list_diagrams` | List all diagrams in the project |
-| `cameo_create_diagram` | Create a new diagram (18 types supported) |
+| `cameo_create_diagram` | Create a new diagram (UML and SysML variants supported; shared behavioral diagrams such as State Machine, Activity, Sequence, and Use Case default to the SysML descriptor, with `uml <name>` aliases for the plain UML version) |
 | `cameo_add_to_diagram` | Place a model element on a diagram canvas and return its `presentationId` |
 | `cameo_get_diagram_image` | Export a diagram image with optional metadata-only, resize, and transcode controls |
 | `cameo_auto_layout` | Apply Cameo's built-in auto-layout |

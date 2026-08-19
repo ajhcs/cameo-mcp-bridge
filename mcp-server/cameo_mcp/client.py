@@ -20,10 +20,19 @@ BRIDGE_HANDSHAKE_VERSION = "1"
 VALIDATED_DIAGRAM_TYPES: list[dict[str, Any]] = [
     {"canonical": "Class", "nativeType": "Class Diagram", "family": "uml", "aliases": ["class", "ClassDiagram", "Class Diagram"]},
     {"canonical": "Package", "nativeType": "Package Diagram", "family": "uml", "aliases": ["package", "PackageDiagram", "Package Diagram"]},
-    {"canonical": "UseCase", "nativeType": "Use Case Diagram", "family": "uml", "aliases": ["usecase", "use case", "UseCaseDiagram", "Use Case Diagram"]},
-    {"canonical": "Activity", "nativeType": "Activity Diagram", "family": "uml", "aliases": ["activity", "ActivityDiagram", "Activity Diagram"]},
-    {"canonical": "Sequence", "nativeType": "Sequence Diagram", "family": "uml", "aliases": ["sequence", "SequenceDiagram", "Sequence Diagram"]},
-    {"canonical": "StateMachine", "nativeType": "State Machine Diagram", "family": "uml", "aliases": ["statemachine", "state machine", "StateMachineDiagram", "State Machine Diagram"]},
+    # Shared UML/SysML behavioral diagrams default to the SysML descriptor
+    # (this bridge targets SysML/MBSE). Use the explicit `uml <name>` aliases
+    # to obtain the plain UML descriptor when needed. The UML variant entry is
+    # listed BEFORE its SysML counterpart so the friendly literal
+    # "X Diagram" alias resolves to the SysML default, not the UML variant.
+    {"canonical": "UMLUseCase", "nativeType": "Use Case Diagram", "family": "uml", "aliases": ["uml use case", "uml usecase", "UMLUseCaseDiagram", "UML Use Case Diagram"]},
+    {"canonical": "UseCase", "nativeType": "SysML Use Case Diagram", "family": "sysml", "aliases": ["usecase", "use case", "UseCaseDiagram", "Use Case Diagram", "sysml use case", "sysml usecase"]},
+    {"canonical": "UMLActivity", "nativeType": "Activity Diagram", "family": "uml", "aliases": ["uml activity", "UMLActivityDiagram", "UML Activity Diagram"]},
+    {"canonical": "Activity", "nativeType": "SysML Activity Diagram", "family": "sysml", "aliases": ["activity", "ActivityDiagram", "Activity Diagram", "sysml activity"]},
+    {"canonical": "UMLSequence", "nativeType": "Sequence Diagram", "family": "uml", "aliases": ["uml sequence", "UMLSequenceDiagram", "UML Sequence Diagram"]},
+    {"canonical": "Sequence", "nativeType": "SysML Sequence Diagram", "family": "sysml", "aliases": ["sequence", "SequenceDiagram", "Sequence Diagram", "sysml sequence"]},
+    {"canonical": "UMLStateMachine", "nativeType": "State Machine Diagram", "family": "uml", "aliases": ["uml state machine", "uml statemachine", "UMLStateMachineDiagram", "UML State Machine Diagram"]},
+    {"canonical": "StateMachine", "nativeType": "SysML State Machine Diagram", "family": "sysml", "aliases": ["statemachine", "state machine", "StateMachineDiagram", "State Machine Diagram", "sysml state machine", "sysml statemachine"]},
     {"canonical": "Component", "nativeType": "Component Diagram", "family": "uml", "aliases": ["component", "ComponentDiagram", "Component Diagram"]},
     {"canonical": "Deployment", "nativeType": "Deployment Diagram", "family": "uml", "aliases": ["deployment", "DeploymentDiagram", "Deployment Diagram"]},
     {"canonical": "CompositeStructure", "nativeType": "Composite Structure Diagram", "family": "uml", "aliases": ["compositestructure", "composite structure", "CompositeStructureDiagram", "Composite Structure Diagram"]},
