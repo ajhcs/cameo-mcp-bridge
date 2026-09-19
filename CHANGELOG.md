@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Resolved SysML/UML diagram-type confusion: shared behavioral diagrams (State Machine, Activity, Sequence, Use Case) now resolve to their **SysML** descriptor by default instead of silently producing the plain UML diagram. This aligns diagram creation with the bridge's "do not silently produce plain UML elements" policy (see README) and fixes the symptom where AI-created state machine diagrams showed a generic sheet icon instead of the SysML state-machine icon.
+  - The SysML variants are now also enumerated in `cameo_list_diagram_types`, so agents and users can discover them.
+  - Explicit `uml <name>` aliases (`uml state machine`, `uml activity`, `uml sequence`, `uml use case`) reach the plain UML descriptor when needed.
+  - Methodology-driven OOSEM recipes that request `Use Case Diagram` / `Activity Diagram` now automatically yield the SysML variants.
+
 ## 2.3.5 - 2026-05-05
 
 Evidence-gathering release for native Relation Map debugging and UI-created settings inspection.

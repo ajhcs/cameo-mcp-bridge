@@ -3269,16 +3269,40 @@ public class DiagramHandler implements HttpHandler {
             case "use case":
             case "usecase":
             case "use case diagram":
+            case "sysml usecase":
+            case "sysml use case":
+            case "sysml use case diagram":
+                return "SysML Use Case Diagram";
+            case "uml usecase":
+            case "uml use case":
+            case "uml use case diagram":
                 return "Use Case Diagram";
             case "activity":
             case "activity diagram":
+            case "sysml activity":
+            case "sysml activity diagram":
+                return "SysML Activity Diagram";
+            case "uml activity":
+            case "uml activity diagram":
                 return "Activity Diagram";
             case "sequence":
             case "sequence diagram":
+            case "sysml sequence":
+            case "sysml sequence diagram":
+                return "SysML Sequence Diagram";
+            case "uml sequence":
+            case "uml sequence diagram":
                 return "Sequence Diagram";
             case "state machine":
             case "statemachine":
             case "state machine diagram":
+            case "sysml state machine":
+            case "sysml statemachine":
+            case "sysml state machine diagram":
+                return "SysML State Machine Diagram";
+            case "uml state machine":
+            case "uml statemachine":
+            case "uml state machine diagram":
                 return "State Machine Diagram";
             case "component":
             case "component diagram":
